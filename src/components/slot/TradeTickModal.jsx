@@ -11,39 +11,75 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-const COORD = import.meta.env.VITE_ALGO_COORD_URL?.replace(/\/+$/, '') || '';
+const COORD   = import.meta.env.VITE_ALGO_COORD_URL?.replace(/\/+$/, '') || '';
+const ARCHIVE = import.meta.env.VITE_TICK_ARCHIVE_URL?.replace(/\/+$/, '') || '';
 const TICK = 0.25;
 const PRE_PAD_NS  =  5 * 1_000_000_000;   // 5 s before entry
 const POST_PAD_NS =  5 * 1_000_000_000;   // 5 s after exit
 
+function parseTickNdjson(text) {
+  const arr = [];
+  for (const line of text.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    try { arr.push(JSON.parse(s)); } catch {}
+  }
+  return arr;
+}
+
 export default function TradeTickModal({ trade, decision, onClose, onPrev, onNext }) {
   const [ticks, setTicks] = useState(null);   // null = loading, [] = no data, [...] = ok
   const [err, setErr] = useState(null);
+  const [source, setSource] = useState(null); // 'coord' | 'archive' | null
 
   const fromNs = trade?.entry_ts ? trade.entry_ts - PRE_PAD_NS : 0;
   const toNs   = trade?.exit_ts  ? trade.exit_ts  + POST_PAD_NS : (trade?.entry_ts || 0) + PRE_PAD_NS;
 
   useEffect(() => {
     if (!trade) return;
+    let cancelled = false;
     setTicks(null);
     setErr(null);
+    setSource(null);
     if (!COORD) {
       setErr("mock mode: no tick source");
       setTicks([]);
       return;
     }
+    // Tier 1: coord's in-memory ring buffer (fast, recent ~4h).
     fetch(`${COORD}/tick_history?from_ns=${fromNs}&to_ns=${toNs}`)
       .then(r => r.text())
       .then(text => {
-        const arr = [];
-        for (const line of text.split('\n')) {
-          const s = line.trim();
-          if (!s) continue;
-          try { arr.push(JSON.parse(s)); } catch {}
+        if (cancelled) return;
+        const arr = parseTickNdjson(text);
+        if (arr.length > 0) {
+          setSource('coord');
+          setTicks(arr);
+          return;
         }
-        setTicks(arr);
+        // Tier 2: archive sidecar (slower, longer-history). Skipped
+        // when not configured — modal falls through to "no ticks".
+        if (!ARCHIVE) {
+          setTicks([]);
+          return;
+        }
+        setSource('archive-loading');
+        return fetch(`${ARCHIVE}/tick_history?from_ns=${fromNs}&to_ns=${toNs}`)
+          .then(r => r.text())
+          .then(text2 => {
+            if (cancelled) return;
+            const arr2 = parseTickNdjson(text2);
+            setSource(arr2.length > 0 ? 'archive' : null);
+            setTicks(arr2);
+          })
+          .catch(e => {
+            if (cancelled) return;
+            setErr(`archive: ${String(e)}`);
+            setTicks([]);
+          });
       })
-      .catch(e => { setErr(String(e)); setTicks([]); });
+      .catch(e => { if (!cancelled) { setErr(String(e)); setTicks([]); } });
+    return () => { cancelled = true; };
   }, [trade?.entry_ts, fromNs, toNs]);
 
   // Esc to close, ←/→ for prev/next.
@@ -114,6 +150,7 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
         <TickChart
           ticks={ticks}
           err={err}
+          source={source}
           trade={trade}
           slPx={slPx}
           fromNs={fromNs}
@@ -132,7 +169,7 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
   );
 }
 
-function TickChart({ ticks, err, trade, slPx, fromNs, toNs }) {
+function TickChart({ ticks, err, source, trade, slPx, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
 
@@ -147,6 +184,17 @@ function TickChart({ ticks, err, trade, slPx, fromNs, toNs }) {
     return () => ro.disconnect();
   }, [ticks, trade, slPx, fromNs, toNs]);
 
+  // Per prime directive: surface where the ticks actually came from.
+  // Live ring vs disk archive is meaningful for "is this what the
+  // strategy actually saw at the time?" — archive is canonical
+  // Databento capture; ring is coord's live subscription.
+  const sourceLabel = (
+    source === 'coord'           ? 'live buffer' :
+    source === 'archive'         ? 'disk archive' :
+    source === 'archive-loading' ? 'fetching from archive…' :
+    null
+  );
+
   return (
     <div ref={wrapRef} className="relative w-full h-72 bg-bg rounded">
       <canvas ref={canvasRef} className="w-full h-full" />
@@ -157,7 +205,19 @@ function TickChart({ ticks, err, trade, slPx, fromNs, toNs }) {
       )}
       {ticks && ticks.length === 0 && (
         <div className="absolute inset-0 flex items-center justify-center text-muted text-xs">
-          {err ? `error: ${err}` : 'no ticks in window (older than buffer; E:\\TickData fallback TBD)'}
+          {err
+            ? `error: ${err}`
+            : 'no ticks in window — outside live buffer and not in archive'}
+        </div>
+      )}
+      {source === 'archive-loading' && (
+        <div className="absolute top-1 right-2 text-[10px] text-muted">
+          fetching from archive…
+        </div>
+      )}
+      {ticks && ticks.length > 0 && sourceLabel && (
+        <div className="absolute top-1 right-2 text-[10px] text-muted tnum">
+          {ticks.length.toLocaleString()} ticks · source: {sourceLabel}
         </div>
       )}
     </div>
