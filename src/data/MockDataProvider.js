@@ -120,10 +120,15 @@ export function useSlotData(runnerId, slotIdx) {
     return () => { cancelled = true; };
   }, [runnerId, slotIdx]);
 
-  // Live subscription — append incoming decisions (and synthesize a
-  // bar from each, since the runner emits one decision per bar close).
-  // No-op in mock mode (SSE_ENABLED=false). Updates the same `data`
-  // object so chart / trade table / strategy panel all re-render.
+  // Live subscription — append incoming decisions and merge their MA/ATR
+  // values into the matching bar (by bar_idx). Earlier this code
+  // synthesized a duplicate bar at the decision's ts_ns; that left two
+  // bars at the same timestamp in the array and, combined with the
+  // chart's `t < lastTime` incremental-skip, caused late decisions to be
+  // dropped silently — visible as the MA stair-stepping and early
+  // termination bug. Now bar_update events are the single source of bar
+  // structure; decisions only contribute the per-slot indicator values.
+  // No-op in mock mode (SSE_ENABLED=false).
   const onDecision = useCallback((evt) => {
     const d = evt.data;
     if (!d || d.type !== 'decision') return;
@@ -135,9 +140,39 @@ export function useSlotData(runnerId, slotIdx) {
       const lastDec = prev.decisions[prev.decisions.length - 1];
       if (lastDec && lastDec.ts_ns >= d.ts_ns) return prev;
       const decisions = [...prev.decisions, d];
-      const lastBar = prev.bars[prev.bars.length - 1];
-      const bar = synthesizeBarFromDecision(d, lastBar);
-      const bars = bar ? [...prev.bars, bar] : prev.bars;
+
+      // Merge MA/ATR into the matching bar by bar_idx. Bounded lookback
+      // avoids walking the whole bars array for every decision — late
+      // arrivals past LOOKBACK_BARS indicate data-feed problems, not
+      // normal race timing.
+      const x = d.xovd || {};
+      const newFast = x.fast_ma || 0;
+      const newSlow = x.slow_ma || 0;
+      const newAtr  = x.atr || 0;
+      const LOOKBACK_BARS = 50;
+      let bars = prev.bars;
+      let matched = false;
+      const start = Math.max(0, bars.length - LOOKBACK_BARS);
+      for (let i = bars.length - 1; i >= start; i--) {
+        if (bars[i].bar_idx === d.bar_idx) {
+          bars = bars.slice();
+          bars[i] = { ...bars[i],
+            fast_ma: newFast, slow_ma: newSlow, atr: newAtr };
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) {
+        // Fallback: decision arrived before any bar_update for its
+        // bar_idx (or bars.jsonl is unavailable — dev capture, archived
+        // run). Synthesize a bar from the decision. A later bar_update
+        // for the same bar_idx will merge real OHLC into it in place.
+        const lastBar = bars[bars.length - 1];
+        const bar = synthesizeBarFromDecision(d, lastBar);
+        if (bar) bars = [...bars, bar];
+      }
+
       return { ...prev, decisions, bars };
     });
   }, []);
@@ -160,18 +195,20 @@ export function useSlotData(runnerId, slotIdx) {
       if (!prev) return prev;
       const last = prev.bars[prev.bars.length - 1];
       if (last && last.bar_idx === b.bar_idx) {
-        // Update in place — preserve MA/ATR from the existing entry
-        // (those come from decision events, not bars.jsonl).
+        // Update in place — preserve any MA/ATR already merged in by a
+        // decision event for this bar_idx.
         const merged = { ...last,
           open: b.open, high: b.high, low: b.low,
           close: b.close, volume: b.volume };
         return { ...prev, bars: [...prev.bars.slice(0, -1), merged] };
       }
-      // New bar — append. MA/ATR start at the prior bar's values
-      // until the next decision event arrives with fresh ones.
-      const seed = last
-        ? { fast_ma: last.fast_ma, slow_ma: last.slow_ma, atr: last.atr }
-        : { fast_ma: 0, slow_ma: 0, atr: 0 };
+      // New bar — append with MA/ATR ZERO (not seeded from prior bar).
+      // The chart's MA series filters fast_ma > 0, so the line ends at
+      // the last bar that actually has a decision-emitted MA. The
+      // forming bar's MA isn't defined until the bar closes; per
+      // feedback_prime_directive_correctness.md we surface that as a
+      // visible gap rather than smoothing over with stale data.
+      const seed = { fast_ma: 0, slow_ma: 0, atr: 0 };
       return { ...prev, bars: [...prev.bars, { ...b, ...seed }] };
     });
   }, []);

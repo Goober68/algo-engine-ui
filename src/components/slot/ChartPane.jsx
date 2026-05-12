@@ -196,15 +196,21 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
       tfChangedRef.current = false;
       lastBarRef.current = aggregated[aggregated.length - 1];
     } else {
-      // Incremental: update only the last bar (or any newer bars
-      // appended since last render). chart.update keeps visible
-      // range untouched.
-      const lastTime = lastBarRef.current
-        ? Math.floor(lastBarRef.current.ts_ns / 1e9)
-        : -Infinity;
-      for (const b of aggregated) {
+      // Incremental: replay the trailing window of bars (not only
+      // strictly newer ones). chart.update is idempotent on unchanged
+      // values, and lightweight-charts indexes by `time` internally, so
+      // pushing the same (time, value) pair is cheap. The reason we
+      // can't filter by `t < lastTime` here: a late-arriving decision
+      // event merges fresh MA into an already-rendered bar (bar N) AFTER
+      // a bar_update has already advanced rendering past it (bar N+1).
+      // If we skipped on time, the fresh MA would never reach the
+      // chart — that was the MA stair-step / early-termination bug.
+      // A bounded lookback keeps per-render cost in check.
+      const LOOKBACK_BARS = 50;
+      const start = Math.max(0, aggregated.length - LOOKBACK_BARS);
+      for (let i = start; i < aggregated.length; i++) {
+        const b = aggregated[i];
         const t = Math.floor(b.ts_ns / 1e9);
-        if (t < lastTime) continue;
         candles.update({ time: t, open: b.open, high: b.high, low: b.low, close: b.close });
         if (b.fast_ma > 0) fastMa.update({ time: t, value: b.fast_ma });
         if (b.slow_ma > 0) slowMa.update({ time: t, value: b.slow_ma });
