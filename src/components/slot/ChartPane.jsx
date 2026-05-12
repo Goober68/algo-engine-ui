@@ -98,8 +98,8 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
       wickUpColor:'#FFF59D', wickDownColor:'#80DEEA',
     });
     // MA palette: purple fast, saturated blue slow. Per user spec.
-    const fastMa = chart.addSeries(LineSeries, { color: '#E040FB', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-    const slowMa = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
+    const fastMa = chart.addSeries(LineSeries, { color: '#E040FB', lineWidth: 3, priceLineVisible: false, lastValueVisible: false });
+    const slowMa = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 3, priceLineVisible: false, lastValueVisible: false });
 
     // Click-on-candle -> find nearest broker trade. First exact bar match,
     // then nearest-in-time within a couple of bar widths so the user
@@ -486,33 +486,42 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
   return { drawn, total: inRange.length * 2, outOfRange };
 }
 
-// Per-bar entry-limit trail. Visual feedback for the maxAtr/dist/buffer
-// param combo: shows where the strategy WOULD have parked the limit
-// each bar. Segments colored by outcome at the bar's CLOSE:
-//   sent long  -> cyan
-//   sent short -> yellow
-//   blocked    -> red
-//   no signal  -> grey (dim, ambient)
-// Point-to-point (no smoothing) — the user wants to see the exact step
-// shape so the params' effect is legible.
+// Per-bar entry-limit trail. Direction-coded (cyan long, yellow short)
+// with intensity by outcome:
+//   bright = order placed (or fully un-blocked)
+//   dim    = computed but blocked by an algo-layer gate other than
+//            Proximity (cooldown, bars-after-cross, bars-on-side,
+//            geometry) OR by a trading-layer gate (max trades, hedge,
+//            slots full, sizing zero)
+//   hidden = infra-blocked, session-blocked, or Proximity-blocked
+//            ("too far away"). Per user 2026-05-12: if the price is
+//            too far from the would-be entry, drawing the line is
+//            noise — the strategy isn't shopping a limit anywhere near
+//            actionable territory.
+// Point-to-point (no smoothing) so each bar's value is legible.
 const LIMIT_COLORS = {
-  long_sent:  '#06b6d4',   // cyan
-  short_sent: '#facc15',   // yellow
-  blocked:    '#ef5350',   // red
-  none:       'rgba(124,129,144,0.35)',  // dim grey, ambient
+  long_bright:  '#06b6d4',                       // cyan
+  long_dim:     'rgba(6,182,212,0.45)',
+  short_bright: '#facc15',                       // yellow
+  short_dim:    'rgba(250,204,21,0.45)',
 };
+
+// XovdGate::Proximity (5) per algobot/strategy/xovdV1.h. Used to
+// distinguish "too far away" (hide) from other algo-layer blocks
+// (dim). If the gate enum is renumbered runner-side, also update here.
+const ALGO_GATE_PROXIMITY = 5;
 
 function classifyDecision(d) {
   if (d.is_warmup) return null;
   if (d.entry_limit == null || d.entry_limit <= 0) return null;
-  // Side comes from xovd.state: crossed_up = long-bias, crossed_down = short.
-  // Independent of blocked/sent — a blocked LONG should still color red,
-  // but knowing the side lets the user-side legend stay correct if we
-  // ever surface it.
+  // Hard hides: infra / session / proximity.
+  if (d.blocked_layer === 'infrastructure') return null;
+  if (d.blocked_layer === 'session') return null;
+  if (d.blocked_layer === 'algo' && d.algo_gate === ALGO_GATE_PROXIMITY) return null;
   const isLong = d.xovd?.state === 'crossed_up';
-  if (d.blocked_layer && d.blocked_layer !== 'none') return 'blocked';
-  if (d.order_placed >= 0) return isLong ? 'long_sent' : 'short_sent';
-  return 'none';
+  const blocked = d.blocked_layer && d.blocked_layer !== 'none';
+  if (isLong) return blocked ? 'long_dim' : 'long_bright';
+  return blocked ? 'short_dim' : 'short_bright';
 }
 
 function drawLimitLine(ctx, chart, candles, data, tf, snap) {
@@ -546,21 +555,29 @@ function drawLimitLine(ctx, chart, candles, data, tf, snap) {
 }
 
 // Slow-EMA-anchored variant of the primary limit line. Reads
-// `d.entry_limit_slow` (TBD field, see COORDINATION.md 2026-05-12).
-// Visual treatment: dashed line in the same direction-coded color as
-// the primary (cyan for long-bias, yellow for short-bias) but with
+// `d.xovd.entry_limit_slow` (engine-claude commit 2026-05-12 puts it
+// inside the xovd subobject alongside fast_ma/slow_ma/atr).
+// Visual treatment: dashed, same direction-coded hue as the primary,
 // reduced opacity so it reads as the "alternative / what-if" overlay.
-// Hidden entirely while in a position (same logic as primary).
+// Same gating logic as the primary (bright/dim/hidden by gate).
 const LIMIT_COLORS_SLOW = {
-  long_potential:  'rgba(6,182,212,0.55)',    // dashed cyan, dimmed
-  short_potential: 'rgba(250,204,21,0.55)',   // dashed yellow, dimmed
+  long_bright:  'rgba(6,182,212,0.75)',
+  long_dim:     'rgba(6,182,212,0.30)',
+  short_bright: 'rgba(250,204,21,0.75)',
+  short_dim:    'rgba(250,204,21,0.30)',
 };
 
 function classifyDecisionSlow(d) {
   if (d.is_warmup) return null;
-  if (d.entry_limit_slow == null || d.entry_limit_slow <= 0) return null;
+  const slowLimit = d.xovd?.entry_limit_slow;
+  if (slowLimit == null || slowLimit <= 0) return null;
+  if (d.blocked_layer === 'infrastructure') return null;
+  if (d.blocked_layer === 'session') return null;
+  if (d.blocked_layer === 'algo' && d.algo_gate === ALGO_GATE_PROXIMITY) return null;
   const isLong = d.xovd?.state === 'crossed_up';
-  return isLong ? 'long_potential' : 'short_potential';
+  const blocked = d.blocked_layer && d.blocked_layer !== 'none';
+  if (isLong) return blocked ? 'long_dim' : 'long_bright';
+  return blocked ? 'short_dim' : 'short_bright';
 }
 
 function drawLimitLineSlow(ctx, chart, candles, data, tf, snap) {
@@ -577,7 +594,7 @@ function drawLimitLineSlow(ctx, chart, candles, data, tf, snap) {
     const t = Math.floor(d.ts_ns / 1e9);
     const x = ts.timeToCoordinate(snap(t));
     if (x == null) { prev = null; continue; }
-    const y = candles.priceToCoordinate(d.entry_limit_slow);
+    const y = candles.priceToCoordinate(d.xovd.entry_limit_slow);
     if (y == null) { prev = null; continue; }
     if (prev) {
       ctx.strokeStyle = LIMIT_COLORS_SLOW[cls];
