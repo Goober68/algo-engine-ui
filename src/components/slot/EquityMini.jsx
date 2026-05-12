@@ -1,0 +1,102 @@
+// Tight equity strip: sim (solid blue) vs broker truth (dashed amber).
+// Both series plotted against TIME (exit_ts), not index, so the curves
+// stay aligned when the two histories have different lengths.
+
+import { LineChart, Line, ResponsiveContainer, ReferenceLine, XAxis, YAxis, Tooltip } from 'recharts';
+import { useMemo } from 'react';
+
+export default function EquityMini({ data }) {
+  const series = useMemo(() => buildEquity(data), [data]);
+  const last   = series.length ? series[series.length - 1] : { sim: 0, broker: 0 };
+  return (
+    <div className="w-full h-full px-2 pt-1 pb-0.5 flex flex-col">
+      <div className="flex items-baseline justify-between text-[10px] text-muted tnum mb-0.5">
+        <span>EQUITY</span>
+        <span>
+          sim <span className={(last.sim ?? 0) >= 0 ? 'text-long' : 'text-short'}>{fmt(last.sim)}</span>
+          {' · '}
+          broker <span className={(last.broker ?? 0) >= 0 ? 'text-long' : 'text-short'}>{fmt(last.broker)}</span>
+        </span>
+      </div>
+      <div className="flex-1 min-h-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={series} margin={{ top: 2, right: 6, left: 4, bottom: 0 }}>
+            <XAxis
+              dataKey="ts" type="number" scale="time"
+              domain={['dataMin', 'dataMax']}
+              hide
+            />
+            <YAxis
+              width={36}
+              tick={{ fill: '#7c8190', fontSize: 9 }}
+              tickFormatter={fmtYAxis}
+              domain={['dataMin', 'dataMax']}
+              axisLine={{ stroke: '#2a2e36' }}
+              tickLine={{ stroke: '#2a2e36' }}
+            />
+            <ReferenceLine y={0} stroke="#2a2e36" strokeDasharray="2 2" />
+            <Tooltip
+              contentStyle={{ background: '#1a1d23', border: '1px solid #2a2e36', fontSize: 10, padding: '4px 6px' }}
+              labelStyle={{ color: '#7c8190' }}
+              labelFormatter={(ts) => new Date(ts).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
+              formatter={(v, name) => [v == null ? '—' : `$${Number(v).toFixed(2)}`, name]}
+            />
+            <Line type="linear" dataKey="sim"    stroke="#5fa8ff" dot={false} strokeWidth={1.2} isAnimationActive={false} connectNulls />
+            <Line type="linear" dataKey="broker" stroke="#ffb300" dot={false} strokeWidth={1.2} strokeDasharray="3 2" isAnimationActive={false} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// Build a time-indexed equity curve, last 24h only. Each event (trade
+// exit OR broker fill) contributes a step at its exit timestamp.
+// Both series share the merged time axis so they line up visually.
+//
+// Cumulative PnL is rebased to the window start — i.e. trades that
+// closed before the 24h cutoff still count toward the curve's starting
+// y-value, so the operator sees "where the equity is RIGHT NOW vs
+// where it was 24h ago", not "PnL since this morning only".
+function buildEquity({ trades = [], broker = [] }) {
+  const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+  const events = [];
+  let simBase = 0, brBase = 0;
+  for (const t of trades) {
+    if (t.pnl == null || !t.exit_ts) continue;
+    const ms = t.exit_ts / 1e6;
+    if (ms < cutoffMs) { simBase += t.pnl; continue; }
+    events.push({ ts: ms, kind: 'sim', pnl: t.pnl });
+  }
+  for (const b of broker) {
+    if (b.pnl == null || !b.exit_ts) continue;
+    const ms = b.exit_ts / 1e6;
+    if (ms < cutoffMs) { brBase += b.pnl; continue; }
+    events.push({ ts: ms, kind: 'broker', pnl: b.pnl });
+  }
+  events.sort((a, b) => a.ts - b.ts);
+
+  let simEq = simBase, brEq = brBase;
+  const out = [];
+  // Seed point at the window's left edge so the curve doesn't appear
+  // to start at $0 — anchors at the running total carried in from
+  // pre-window history.
+  out.push({ ts: cutoffMs, sim: simEq, broker: brEq });
+  for (const e of events) {
+    if (e.kind === 'sim')    simEq += e.pnl;
+    if (e.kind === 'broker') brEq  += e.pnl;
+    out.push({ ts: e.ts, sim: simEq, broker: brEq });
+  }
+  return out;
+}
+
+function fmt(v) {
+  const n = v ?? 0;
+  return (n >= 0 ? '+$' : '-$') + Math.abs(n).toFixed(0);
+}
+// Compact Y-axis labels: $1k, $1.2k etc. Bare dollars below 1k.
+function fmtYAxis(v) {
+  const n = Math.round(v);
+  if (Math.abs(n) >= 1000) return (n >= 0 ? '$' : '-$') + (Math.abs(n) / 1000).toFixed(1) + 'k';
+  return (n >= 0 ? '$' : '-$') + Math.abs(n);
+}

@@ -1,0 +1,42 @@
+{
+  "host": "192.168.1.203",
+  "host_note": "VPS — Databento NSSM service + all runners colocated. Tick feed on localhost:9876, bar feed on localhost:9877.",
+  "runners": [
+    {
+      "id":     "xovd-prod-3way",
+      "label":  "XOVD prod (3-way)",
+      "status": "live",
+      "binary": "runner.exe @ 2a44fdf",
+      "pid":    8132,
+      "port":   8080,
+      "config_file": "configs/xovd_3way_live.jsonl",
+      "data_path": "/live_2026_05_10",
+      "started_at": "2026-05-10T19:25:02-07:00",
+      "note": "3 LIVE slots (TPT-499/656/671) — POSTs to relay"
+    },
+    {
+      "id":     "xovd-shadow-3way",
+      "label":  "XOVD shadow (3-way)",
+      "status": "shadow",
+      "binary": "runner.exe @ 2a44fdf",
+      "pid":    8156,
+      "port":   8081,
+      "config_file": "configs/xovd_3way_shadow.jsonl",
+      "data_path": "/live_2026_05_10",
+      "started_at": "2026-05-10T19:25:02-07:00",
+      "note": "Same XOVD configs, dry-run mode — no relay POSTs. Divergence sanity check vs prod."
+    },
+    {
+      "id":     "xovd-experiment",
+      "label":  "XOVD experiment",
+      "status": "offline",
+      "binary": "runner.exe @ dev",
+      "pid":    null,
+      "port":   8082,
+      "config_file": "configs/xovd_experimental.jsonl",
+      "data_path": "/live_2026_05_10",
+      "started_at": null,
+      "note": "Stopped — used for variant-parameter probing before promotion to shadow"
+    }
+  ]
+}

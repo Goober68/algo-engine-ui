@@ -1,0 +1,16 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", system-ui, sans-serif);
+  font-size: 13px;
+}
+
+/* Tabular numerics everywhere we render prices and pnl */
+.tnum { font-variant-numeric: tabular-nums; }

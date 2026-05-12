@@ -1,0 +1,52 @@
+{
+  "run_id": "live_2026_05_10",
+  "kind": "live",
+  "started_at": "2026-05-10T19:25:02-07:00",
+  "completed_at": "2026-05-11T07:00:00-07:00",
+  "schema_version": 1,
+  "symbol": "MNQM6",
+  "bar_period_sec": 180,
+  "slots": [
+    {
+      "slot_idx": 0,
+      "account": "TPT-499",
+      "label": "cluster_v2 canonical",
+      "config": {
+        "fastPeriod": 29,
+        "slowPeriod": 62
+      },
+      "live": true,
+      "n_bars": 423,
+      "n_trades": 27,
+      "n_broker": 27
+    },
+    {
+      "slot_idx": 1,
+      "account": "TPT-656",
+      "label": "tpAtrMult=5.5",
+      "config": {
+        "fastPeriod": 34,
+        "slowPeriod": 70,
+        "tpAtrMult": 5.5
+      },
+      "live": true,
+      "n_bars": 423,
+      "n_trades": 22,
+      "n_broker": 22
+    },
+    {
+      "slot_idx": 2,
+      "account": "TPT-671",
+      "label": "distAdjust=0.30",
+      "config": {
+        "fastPeriod": 25,
+        "slowPeriod": 60,
+        "distAdjust": 0.3
+      },
+      "live": true,
+      "n_bars": 423,
+      "n_trades": 35,
+      "n_broker": 35
+    }
+  ]
+}
