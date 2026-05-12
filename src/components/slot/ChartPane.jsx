@@ -196,25 +196,42 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
       tfChangedRef.current = false;
       lastBarRef.current = aggregated[aggregated.length - 1];
     } else {
-      // Incremental: replay the trailing window of bars (not only
-      // strictly newer ones). chart.update is idempotent on unchanged
-      // values, and lightweight-charts indexes by `time` internally, so
-      // pushing the same (time, value) pair is cheap. The reason we
-      // can't filter by `t < lastTime` here: a late-arriving decision
-      // event merges fresh MA into an already-rendered bar (bar N) AFTER
-      // a bar_update has already advanced rendering past it (bar N+1).
-      // If we skipped on time, the fresh MA would never reach the
-      // chart — that was the MA stair-step / early-termination bug.
-      // A bounded lookback keeps per-render cost in check.
-      const LOOKBACK_BARS = 50;
-      const start = Math.max(0, aggregated.length - LOOKBACK_BARS);
-      for (let i = start; i < aggregated.length; i++) {
-        const b = aggregated[i];
+      // Incremental:
+      //
+      // CANDLES via update() — only for bars at or after the chart's
+      // current last time. lightweight-charts v5's update() throws
+      // "Cannot update oldest data" if called with a time older than
+      // the series' last data point. The forming bar / latest-closing
+      // bar always satisfies this constraint.
+      //
+      // MA series via setData() with the full ordered set — required
+      // because a late-arriving decision merges MA into an older bar
+      // (decision for N arrives after bar_update for N+1 has advanced
+      // the chart). v5 doesn't let update() touch older data, so we
+      // replay the whole MA series. setData is O(N) but N is bounded
+      // (hundreds, maybe a few thousand bars) and it does NOT reset
+      // the chart's visible range — user pan/zoom is preserved.
+      //
+      // Defensive sort: onDecision's fallback may append a synthesized
+      // bar at an older ts_ns; setData requires ascending order.
+      const lastTime = lastBarRef.current
+        ? Math.floor(lastBarRef.current.ts_ns / 1e9)
+        : -Infinity;
+      for (const b of aggregated) {
         const t = Math.floor(b.ts_ns / 1e9);
+        if (t < lastTime) continue;
         candles.update({ time: t, open: b.open, high: b.high, low: b.low, close: b.close });
-        if (b.fast_ma > 0) fastMa.update({ time: t, value: b.fast_ma });
-        if (b.slow_ma > 0) slowMa.update({ time: t, value: b.slow_ma });
       }
+      const fastData = dedupeByTime(aggregated
+        .filter(b => b.fast_ma > 0)
+        .map(b => ({ time: Math.floor(b.ts_ns / 1e9), value: b.fast_ma }))
+        .sort((a, b) => a.time - b.time));
+      const slowData = dedupeByTime(aggregated
+        .filter(b => b.slow_ma > 0)
+        .map(b => ({ time: Math.floor(b.ts_ns / 1e9), value: b.slow_ma }))
+        .sort((a, b) => a.time - b.time));
+      fastMa.setData(fastData);
+      slowMa.setData(slowData);
       lastBarRef.current = aggregated[aggregated.length - 1];
     }
   }, [aggregated, tf]);
