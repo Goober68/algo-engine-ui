@@ -61,7 +61,7 @@ function tickCacheSet(key, value) {
   }
 }
 
-export default function TradeTickModal({ trade, decision, onClose, onPrev, onNext }) {
+export default function TradeTickModal({ trade, decision, audit, onClose, onPrev, onNext }) {
   const [ticks, setTicks] = useState(null);   // null = loading, [] = no data, [...] = ok
   const [err, setErr] = useState(null);
   const [source, setSource] = useState(null); // 'coord' | 'archive' | null
@@ -197,6 +197,9 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
           <KV k="comment"   v={trade.algo_id || ''} />
         </div>
 
+        {/* Webhook bracket (what was POSTed to the relay for this trade) */}
+        {audit && <WebhookPanel audit={audit} trade={trade} />}
+
         {/* Tick chart */}
         <TickChart
           ticks={ticks}
@@ -216,6 +219,63 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
           <span><span className="text-sl">SL</span></span>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Webhook bracket panel — surfaces what was actually sent over the
+// wire to the broker for THIS trade. The runner POSTs a single bracket
+// (entry + SL + TP + trail params) per intent; the broker executes all
+// exits server-side. So when the broker's exit price diverges from the
+// algo's simulated exit, this is the first thing to check (per
+// reference_execution_model_broker_owned_brackets memory).
+//
+// Derives absolute SL / TP / trail-arm prices from the entry + tick
+// counts so the user can map "27 SL ticks" → "28920.25" without doing
+// the math in their head. Tick size pinned to 0.25 for MNQ; if other
+// symbols enter the mix, lift this out.
+function WebhookPanel({ audit, trade }) {
+  const req = audit?.request || {};
+  const sl_ticks      = Number(req.stop_loss     ?? 0);
+  const tp_ticks      = Number(req.take_profit   ?? 0);
+  const trail_trig_t  = Number(req.trail_trigger ?? 0);
+  const trail_dist_t  = Number(req.trail_dist    ?? 0);
+  const entry = Number(req.price ?? trade?.entry_px ?? 0);
+  const isShort = (req.action || '').toLowerCase().includes('sell');
+  // dir = +1 favorable for long (profit when price rises),
+  //       -1 favorable for short (profit when price falls).
+  // SL is adverse:    entry - dir * ticks * TICK
+  // TP / trail-arm are favorable: entry + dir * ticks * TICK
+  const dir = isShort ? -1 : +1;
+  const slPx       = sl_ticks     ? entry - dir * sl_ticks     * TICK : null;
+  const tpPx       = tp_ticks     ? entry + dir * tp_ticks     * TICK : null;
+  // Trail arms after price moves trail_trig_t ticks in FAVOR of the
+  // position; once armed, the SL trails the favorable extreme by
+  // trail_dist_t ticks. The "arm" price is the favorable threshold.
+  const trailArmPx = trail_trig_t ? entry + dir * trail_trig_t * TICK : null;
+
+  const status = audit?.status;
+  const statusOk = status != null && status >= 200 && status < 300;
+  const sigId = req.algo_signal_id || '—';
+  const algo = req.algo_id || '—';
+  const tif = req.time_in_force ? `${req.time_in_force}${req.expire_at ? ' ' + req.expire_at + 's' : ''}` : '—';
+
+  return (
+    <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
+      <div className="col-span-2 text-[10px] uppercase tracking-wide text-muted mb-1">
+        webhook bracket sent to broker
+        <span className={`ml-2 ${statusOk ? 'text-long' : 'text-short'}`}>
+          {status != null ? `HTTP ${status}${statusOk ? ' ok' : ''}` : 'no audit match'}
+        </span>
+      </div>
+      <KV k="SL"          v={`${sl_ticks}t  →  ${slPx?.toFixed(2) ?? '—'}`}    cls="text-sl" />
+      <KV k="TP"          v={`${tp_ticks}t  →  ${tpPx?.toFixed(2) ?? '—'}`}    cls="text-tp" />
+      <KV k="trail arm"   v={`${trail_trig_t}t  →  ${trailArmPx?.toFixed(2) ?? '—'}`} cls="text-trail" />
+      <KV k="trail dist"  v={`${trail_dist_t}t (= ${(trail_dist_t * TICK).toFixed(2)} pts)`} cls="text-trail" />
+      <KV k="time-in-force" v={tif} />
+      <KV k="signal id"     v={sigId} />
+      <KV k="algo"          v={algo} />
+      <KV k="POST ts"       v={fmtFullTime(audit?.ts_ns ?? 0)} />
     </div>
   );
 }

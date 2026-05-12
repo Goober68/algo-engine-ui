@@ -102,6 +102,12 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
   const decision = data.decisions?.find(d =>
     Math.floor(d.ts_ns / 1e9 / TF) * TF === barSec);
 
+  // Match the audit (webhook POST) that produced this fill. Pair on
+  // side+qty within a generous forward window (the POST goes out at
+  // bar close; the limit fills sometime later inside its GTD window).
+  // Pick the nearest unfilled-by-time audit before the entry.
+  const audit = findAuditForTrade(data.audit || [], trade);
+
   const sorted = [...data.broker].sort((a, b) => a.entry_ts - b.entry_ts);
   const idx = sorted.findIndex(t => t.entry_ts === modalTradeKey);
   const prev = idx > 0                ? sorted[idx - 1] : null;
@@ -111,9 +117,35 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
     <TradeTickModal
       trade={trade}
       decision={decision}
+      audit={audit}
       onClose={onClose}
       onPrev={prev ? () => onJump(prev.entry_ts) : null}
       onNext={next ? () => onJump(next.entry_ts) : null}
     />
   );
+}
+
+// Walk audit POSTs and find the one that caused this broker fill.
+// Side must match; quantity must match; the POST timestamp should
+// precede the fill by at most one GTD window (3 min + a small buffer).
+// Returns the closest-by-time match.
+function findAuditForTrade(audits, trade) {
+  const MAX_AHEAD_NS = 5 * 60 * 1_000_000_000;     // 5 min
+  const MAX_BEHIND_NS = 5 * 1_000_000_000;         // 5 s (clock skew)
+  let best = null;
+  let bestD = Infinity;
+  for (const a of audits) {
+    const req = a.request || {};
+    const action = (req.action || '').toLowerCase();
+    const aSide = action.includes('buy') ? 'long' : action.includes('sell') ? 'short' : null;
+    if (aSide !== trade.side) continue;
+    if (Number(req.quantity) !== trade.qty) continue;
+    const delta = trade.entry_ts - a.ts_ns;
+    if (delta < -MAX_BEHIND_NS || delta > MAX_AHEAD_NS) continue;
+    if (Math.abs(delta) < bestD) {
+      bestD = Math.abs(delta);
+      best = a;
+    }
+  }
+  return best;
 }
