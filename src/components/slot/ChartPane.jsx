@@ -439,6 +439,12 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
   const ts = chart.timeScale();
   const snap = (t) => Math.floor(t / tf) * tf;
   drawLimitLine(ctx, chart, candles, data, tf, snap);
+  // Slow-EMA-anchored "what-if" limit line. No-op when the runner
+  // isn't emitting entry_limit_slow yet (engine-claude ask filed in
+  // COORDINATION.md 2026-05-12). When it arrives, this draws a dashed,
+  // dimmed line alongside the primary so "we're in slow-anchor zone
+  // but slow path isn't firing" becomes visible at a glance.
+  drawLimitLineSlow(ctx, chart, candles, data, tf, snap);
 
   // Bars cover (typically) just today — broker_truth is the FULL account
   // history, possibly weeks/months. Restrict to trades whose entry sits
@@ -537,6 +543,52 @@ function drawLimitLine(ctx, chart, candles, data, tf, snap) {
     }
     prev = { x, y };
   }
+}
+
+// Slow-EMA-anchored variant of the primary limit line. Reads
+// `d.entry_limit_slow` (TBD field, see COORDINATION.md 2026-05-12).
+// Visual treatment: dashed line in the same direction-coded color as
+// the primary (cyan for long-bias, yellow for short-bias) but with
+// reduced opacity so it reads as the "alternative / what-if" overlay.
+// Hidden entirely while in a position (same logic as primary).
+const LIMIT_COLORS_SLOW = {
+  long_potential:  'rgba(6,182,212,0.55)',    // dashed cyan, dimmed
+  short_potential: 'rgba(250,204,21,0.55)',   // dashed yellow, dimmed
+};
+
+function classifyDecisionSlow(d) {
+  if (d.is_warmup) return null;
+  if (d.entry_limit_slow == null || d.entry_limit_slow <= 0) return null;
+  const isLong = d.xovd?.state === 'crossed_up';
+  return isLong ? 'long_potential' : 'short_potential';
+}
+
+function drawLimitLineSlow(ctx, chart, candles, data, tf, snap) {
+  if (!data?.decisions?.length) return;
+  const ts = chart.timeScale();
+  ctx.save();
+  ctx.lineWidth = 1.25;
+  ctx.setLineDash([5, 4]);
+  let prev = null;
+  for (const d of data.decisions) {
+    const inTrade = (d.open_qty || 0) !== 0;
+    const cls = inTrade ? null : classifyDecisionSlow(d);
+    if (cls == null) { prev = null; continue; }
+    const t = Math.floor(d.ts_ns / 1e9);
+    const x = ts.timeToCoordinate(snap(t));
+    if (x == null) { prev = null; continue; }
+    const y = candles.priceToCoordinate(d.entry_limit_slow);
+    if (y == null) { prev = null; continue; }
+    if (prev) {
+      ctx.strokeStyle = LIMIT_COLORS_SLOW[cls];
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    }
+    prev = { x, y };
+  }
+  ctx.restore();
 }
 
 function drawBlockMarkers(ctx, chart, candles, data, tf, snap) {
