@@ -65,9 +65,14 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
         borderColor: '#2a2e36',
         timeVisible: true,
         secondsVisible: false,
-        // KEY: when a new bar arrives via chart.update(), do NOT auto-
-        // shift the visible range. User's pan/zoom stays anchored.
-        shiftVisibleRangeOnNewBar: false,
+        // Shift the visible range left by one bar width when a new bar
+        // is appended, so the latest bar stays at the same offset from
+        // the right edge that the user has scrolled/zoomed to. Without
+        // this, new bars accumulate beyond the visible range and the
+        // latest bar slowly creeps off-screen. Note: in-place updates to
+        // the forming bar (per-second close moves) do NOT count as new
+        // bars — those only repaint the rightmost bar in place.
+        shiftVisibleRangeOnNewBar: true,
         rightOffset: 5,
         // Render axis ticks in the browser's local timezone (default
         // is UTC). ts_ns from the runner is UTC, Date() converts.
