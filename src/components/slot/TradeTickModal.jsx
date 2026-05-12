@@ -27,6 +27,40 @@ function parseTickNdjson(text) {
   return arr;
 }
 
+// Module-level LRU cache for fetched tick windows. Lives for the page
+// session (cleared on hard refresh / dev-server bounce). Keyed by
+// `${fromNs}-${toNs}` since both sides of a window are fixed-once-trade-
+// is-closed. Values: { ticks: [...], source: 'coord' | 'archive' }.
+//
+// Why module-level: TradeTickModal mounts/unmounts every time the user
+// opens/closes the modal — instance state is lost. Per-trade cache
+// here means re-opening the same (or prev/next-navigated) trade is
+// instant: no coord round-trip, no DBN decompression, no JSON re-decode.
+//
+// Cap chosen for ~80 MB worst case (20 entries × ~4 MB for a 50k-tick
+// trade window). Drop the cap if the page starts feeling heavy; LRU
+// eviction handles bound enforcement either way.
+const TICK_CACHE = new Map();
+const TICK_CACHE_MAX = 20;
+
+function tickCacheGet(key) {
+  if (!TICK_CACHE.has(key)) return null;
+  // Touch — move to MRU position.
+  const v = TICK_CACHE.get(key);
+  TICK_CACHE.delete(key);
+  TICK_CACHE.set(key, v);
+  return v;
+}
+
+function tickCacheSet(key, value) {
+  if (TICK_CACHE.has(key)) TICK_CACHE.delete(key);
+  TICK_CACHE.set(key, value);
+  while (TICK_CACHE.size > TICK_CACHE_MAX) {
+    const firstKey = TICK_CACHE.keys().next().value;
+    TICK_CACHE.delete(firstKey);
+  }
+}
+
 export default function TradeTickModal({ trade, decision, onClose, onPrev, onNext }) {
   const [ticks, setTicks] = useState(null);   // null = loading, [] = no data, [...] = ok
   const [err, setErr] = useState(null);
@@ -37,6 +71,18 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
 
   useEffect(() => {
     if (!trade) return;
+    const cacheKey = `${fromNs}-${toNs}`;
+
+    // Cache hit: serve instantly, no fetch. Set source to a "cached"
+    // variant of the original so the badge stays accurate.
+    const cached = tickCacheGet(cacheKey);
+    if (cached) {
+      setErr(null);
+      setSource(cached.source);
+      setTicks(cached.ticks);
+      return;
+    }
+
     let cancelled = false;
     setTicks(null);
     setErr(null);
@@ -55,6 +101,7 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
         if (arr.length > 0) {
           setSource('coord');
           setTicks(arr);
+          tickCacheSet(cacheKey, { ticks: arr, source: 'coord' });
           return;
         }
         // Tier 2: archive sidecar (slower, longer-history). Skipped
@@ -69,8 +116,12 @@ export default function TradeTickModal({ trade, decision, onClose, onPrev, onNex
           .then(text2 => {
             if (cancelled) return;
             const arr2 = parseTickNdjson(text2);
-            setSource(arr2.length > 0 ? 'archive' : null);
+            const src = arr2.length > 0 ? 'archive' : null;
+            setSource(src);
             setTicks(arr2);
+            if (arr2.length > 0) {
+              tickCacheSet(cacheKey, { ticks: arr2, source: 'archive' });
+            }
           })
           .catch(e => {
             if (cancelled) return;
