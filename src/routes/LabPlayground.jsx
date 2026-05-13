@@ -1,10 +1,7 @@
 // Native React playground — replaces the iframe. Schema-driven slider
 // sidebar reading xovd_v1's playground_fields from coord, WS-driven
-// rerun on slider change (debounced), stats strip + trades table.
-//
-// Equity curve and saved-configs panels are v2 — keeping v1 focused
-// on the core loop (drag slider → see stats update) so the schema
-// pipeline gets exercised end-to-end first.
+// rerun on slider change (debounced), stats strip + equity curve +
+// trades table. Saved-configs panel still pending.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchStrategySchema } from '../data/strategySchema';
@@ -127,6 +124,7 @@ export default function LabPlayground() {
         />
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           <StatsStrip stats={stats} />
+          <EquityCurve trades={trades} />
           <div className="flex-1 min-h-0 overflow-y-auto">
             <TradesTable trades={trades} />
           </div>
@@ -296,7 +294,66 @@ function Cell({ label, v, cls = '' }) {
 function wrCls(wr) { return wr >= 70 ? 'text-long' : wr >= 30 ? 'text-text' : 'text-short'; }
 function fmtUSD(v) {
   if (v == null) return '—';
-  return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(0);
+  const sign = v > 0 ? '+' : v < 0 ? '-' : '';
+  return sign + '$' + Math.abs(v).toFixed(0);
+}
+
+// ── Equity curve (cumulative $ over trade index) ────────────────────
+// Restored from the legacy strategy-visualizer/playground.html canvas.
+// One point per trade; line color tracks final-PnL sign. Tracks the
+// peak so a drawdown shading is trivial to add later.
+function EquityCurve({ trades }) {
+  const series = useMemo(() => {
+    if (!trades?.length) return null;
+    let cum = 0, peak = 0, maxDD = 0;
+    const pts = trades.map((t, i) => {
+      const p = t.profit ?? t.profit_points ?? 0;
+      cum += Number(p) || 0;
+      if (cum > peak) peak = cum;
+      const dd = peak - cum;
+      if (dd > maxDD) maxDD = dd;
+      return { i, cum };
+    });
+    const lo = Math.min(0, ...pts.map(p => p.cum));
+    const hi = Math.max(0, ...pts.map(p => p.cum));
+    return { pts, lo, hi, final: cum, peak, maxDD };
+  }, [trades]);
+
+  if (!series) {
+    return (
+      <div className="bg-panel border-b border-border px-3 py-2 text-[10px] text-muted/70 italic">
+        Equity curve — run a sweep / drag a slider to populate.
+      </div>
+    );
+  }
+
+  // Inline SVG. Width auto-fits container; height fixed.
+  const W = 800, H = 90, PAD = 4;
+  const { pts, lo, hi, final, peak, maxDD } = series;
+  const span = (hi - lo) || 1;
+  const xOf = (i) => PAD + (i / Math.max(1, pts.length - 1)) * (W - 2 * PAD);
+  const yOf = (v) => H - PAD - ((v - lo) / span) * (H - 2 * PAD);
+  const zeroY = yOf(0);
+  const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.i).toFixed(1)},${yOf(p.cum).toFixed(1)}`).join(' ');
+  const stroke = final >= 0 ? '#26a69a' : '#ef5350';   // long / short
+
+  return (
+    <div className="bg-panel border-b border-border px-3 py-1">
+      <div className="flex items-baseline gap-4 text-[10px]">
+        <span className="text-muted uppercase tracking-wide">equity</span>
+        <span className={'tnum font-semibold ' + (final >= 0 ? 'text-long' : 'text-short')}>
+          {fmtUSD(final)}
+        </span>
+        <span className="text-muted tnum">peak <span className="text-text">{fmtUSD(peak)}</span></span>
+        <span className="text-muted tnum">max DD <span className="text-short">{fmtUSD(-maxDD)}</span></span>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block w-full" style={{ height: H }}>
+        <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY}
+              stroke="#2a2e36" strokeWidth="1" strokeDasharray="2 3" />
+        <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
+      </svg>
+    </div>
+  );
 }
 
 // ── Trades table ────────────────────────────────────────────────────

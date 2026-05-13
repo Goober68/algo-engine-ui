@@ -11,6 +11,7 @@
 // scrolls out.
 
 import { configCountForRow } from './sweepRecipe';
+import { camelToLabel, paramHoverTitle } from './schemaLabels';
 
 export default function SweepRow({ schemaField, recipe, onChange }) {
   const def = schemaField;
@@ -36,13 +37,9 @@ export default function SweepRow({ schemaField, recipe, onChange }) {
 // ── Label + adjacent SWEEP/FIXED pill ────────────────────────────────
 function Header({ def, isSwept, sweepableInSchema, onToggle }) {
   const label = def.label || camelToLabel(def.name);
-  // Always show the kernel param name in hover; if a tooltip exists,
-  // append it on a new line so the user gets both technical handle +
-  // human description from one hover.
-  const hover = def.tooltip ? `${def.name}\n\n${def.tooltip}` : def.name;
   return (
     <div className="flex items-center gap-1.5 min-w-[170px] max-w-[220px]">
-      <span className="text-[11px] text-text truncate" title={hover}>
+      <span className="text-[11px] text-text truncate" title={paramHoverTitle(def)}>
         {label}
       </span>
       {sweepableInSchema ? (
@@ -354,13 +351,3 @@ function fmt(v, isInt) {
   return Number(n.toFixed(4)).toString();
 }
 
-// "fastPeriod" -> "Fast Period". Best-effort fallback used when the
-// schema doesn't ship a hand-authored label; engine-claude can drop
-// `label: "Fast MA period"` into params and the UI picks it up
-// automatically (camelToLabel is bypassed when def.label is set).
-function camelToLabel(name) {
-  if (!name) return '';
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')   // split camel humps
-    .replace(/^[a-z]/, c => c.toUpperCase());  // capitalize first letter
-}

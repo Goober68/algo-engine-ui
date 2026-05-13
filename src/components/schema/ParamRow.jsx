@@ -1,26 +1,30 @@
-// Compact one-line-ish param row used by the playground and (later)
-// the sweep recipe builder. Renders an int/float as a slider, a bool
-// as a toggle, an enum as a dropdown, a string as a text input. The
-// label sits left, the current value right; the input occupies the
-// row below at full width (sliders) or inline (text/enum/bool).
+// Compact one-line-ish param row used by the playground. Renders an
+// int/float as a slider, bool as a toggle, enum as chip buttons
+// (radio), string as a text input. Mirrors SweepRow's label/hover
+// polish so the two layouts feel like siblings.
 //
-// Dense by design: padding tuned so ~30 fields fit a 320px sidebar
-// without scrolling pain.
+// Two-row layout: [label + value] / [control full-width below].
+// Sliders need horizontal real estate so the value-on-top + slider-
+// below pattern is denser than inlining the slider with the label.
+
+import { camelToLabel, paramHoverTitle } from './schemaLabels';
 
 const NUMERIC = new Set(['int', 'float']);
+const ENUM_CHIP_THRESHOLD = 8;
 
 export default function ParamRow({ schemaField, value, onChange, disabled = false }) {
   if (!schemaField) return null;
   const def = schemaField;
+  const label = def.label || camelToLabel(def.name);
 
   return (
-    <div className="px-3 py-1 border-b border-border/20 hover:bg-accent/[0.03]">
-      <div className="flex items-baseline justify-between mb-0.5">
+    <div className="px-3 py-px border-b border-border/20 hover:bg-accent/[0.03]">
+      <div className="flex items-baseline justify-between mb-px">
         <span
-          className="text-[11px] text-muted truncate"
-          title={def.tooltip || def.name || ''}
+          className="text-[11px] text-text truncate"
+          title={paramHoverTitle(def)}
         >
-          {def.label || def.name}
+          {label}
         </span>
         <span className="text-[12px] font-bold text-accent tnum">
           {formatValue(def, value)}
@@ -43,7 +47,7 @@ function Control({ def, value, onChange, disabled }) {
     return <BoolToggle value={value} onChange={onChange} disabled={disabled} />;
   }
   if (def.type === 'enum') {
-    return <EnumSelect def={def} value={value} onChange={onChange} disabled={disabled} />;
+    return <EnumChips def={def} value={value} onChange={onChange} disabled={disabled} />;
   }
   if (NUMERIC.has(def.type) && useText) {
     return <NumberInput def={def} value={value} onChange={onChange} disabled={disabled} />;
@@ -121,19 +125,48 @@ function BoolToggle({ value, onChange, disabled }) {
   );
 }
 
-function EnumSelect({ def, value, onChange, disabled }) {
+// Radio-style chip picker. Falls back to a dropdown when there are
+// too many options to fit on a single line of chips.
+function EnumChips({ def, value, onChange, disabled }) {
   const options = Array.isArray(def.values) ? def.values : [];
+  if (options.length > ENUM_CHIP_THRESHOLD) {
+    return (
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-2 py-0.5 bg-bg border border-border rounded text-text text-[12px] disabled:opacity-40"
+      >
+        {options.map(o => (
+          <option key={String(o)} value={String(o)}>{String(o)}</option>
+        ))}
+      </select>
+    );
+  }
+  const current = String(value ?? def.default);
   return (
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full px-2 py-0.5 bg-bg border border-border rounded text-text text-[12px] disabled:opacity-40"
-    >
-      {options.map(o => (
-        <option key={String(o)} value={String(o)}>{String(o)}</option>
-      ))}
-    </select>
+    <div className="flex flex-wrap gap-1">
+      {options.map(o => {
+        const v = String(o);
+        const on = v === current;
+        return (
+          <button
+            key={v}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(v)}
+            className={
+              'px-1.5 py-0.5 rounded border text-[10px] disabled:opacity-40 ' +
+              (on
+                ? 'bg-accent/20 text-accent border-accent/60'
+                : 'bg-bg text-muted border-border hover:border-muted')
+            }
+          >
+            {v}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
