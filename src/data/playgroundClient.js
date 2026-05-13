@@ -94,6 +94,21 @@ export async function stop() {
   setStatus('disconnected');
 }
 
+// Fetch bars for the session's dataset (one-time, on session ready).
+// Bars don't change between RUNs — only trades do — so the UI caches
+// them locally and overlays per-RUN trades on the same chart data.
+export async function fetchSessionBars() {
+  if (!session) throw new Error('no session — call start() first');
+  const r = await fetch(
+    `${coordBase()}/api/playground/sessions/${session.session_id}/bars`
+  );
+  if (!r.ok) {
+    const text = await r.text().catch(() => `HTTP ${r.status}`);
+    throw new Error(`bars fetch failed: ${text}`);
+  }
+  return r.json();    // { session_id, symbol, bar_period_sec, n_bars, bars: [{time,open,high,low,close,volume}] }
+}
+
 // Send one RUN; returns {run_id, params, stats, trades, wall_ms, ts}.
 export async function sendRun(params) {
   if (!session) {

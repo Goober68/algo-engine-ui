@@ -5,9 +5,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchStrategySchema } from '../data/strategySchema';
-import { getDefaults, getHello, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
+import { fetchSessionBars, getDefaults, getHello, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
 import SchemaSection from '../components/schema/SchemaSection';
 import ParamRow from '../components/schema/ParamRow';
+import ChartPane from '../components/slot/ChartPane';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
@@ -21,6 +22,8 @@ export default function LabPlayground() {
   const [trades, setTrades]       = useState([]);
   const [runWallMs, setRunWallMs] = useState(null);
   const [runError, setRunError]   = useState(null);
+  const [chartBars, setChartBars] = useState(null);    // {ts_ns, open, high, low, close, ...}[]
+  const [tf, setTf]               = useState(180);     // M3 default
   const wsStatus = useWsStatus();
   const debounceRef = useRef(null);
 
@@ -50,6 +53,29 @@ export default function LabPlayground() {
     }
     return () => { stop(); };
   }, []);
+
+  // Once the session is ready, fetch the dataset's bars for the chart.
+  // Bars don't change between RUNs so this is a one-shot per session.
+  useEffect(() => {
+    if (wsStatus !== 'ready') return;
+    let cancelled = false;
+    fetchSessionBars()
+      .then(d => {
+        if (cancelled) return;
+        // Convert coord's seconds-based bar shape to ChartPane's
+        // ts_ns + bar_idx + indicator-slot shape. No indicators yet.
+        const bars = (d.bars || []).map((b, i) => ({
+          ts_ns:   b.time * 1e9,
+          bar_idx: i,
+          open:    b.open, high: b.high, low: b.low, close: b.close,
+          volume:  b.volume,
+          fast_ma: 0, slow_ma: 0, atr: 0,
+        }));
+        setChartBars(bars);
+      })
+      .catch(e => console.error('playground bars fetch failed:', e));
+    return () => { cancelled = true; };
+  }, [wsStatus]);
 
   // When the server sends its hello (with relay-mandated default_params),
   // adopt them if our seed differs (keeps slider order in sync with what
@@ -124,10 +150,14 @@ export default function LabPlayground() {
         />
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           <StatsStrip stats={stats} />
-          <div className="flex-1 min-h-0">
+          {/* Chart 50% / equity 30% / trades 20% per Niall direction. */}
+          <div className="min-h-0" style={{ flex: '0 0 50%' }}>
+            <ChartPaneAdapter bars={chartBars} trades={trades} tf={tf} setTf={setTf} />
+          </div>
+          <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
             <EquityCurve trades={trades} />
           </div>
-          <div className="min-h-0 overflow-y-auto border-t border-border" style={{ flex: '0 0 30%' }}>
+          <div className="min-h-0 overflow-y-auto border-t border-border" style={{ flex: '0 0 20%' }}>
             <TradesTable trades={trades} />
           </div>
         </div>
@@ -298,6 +328,70 @@ function fmtUSD(v) {
   if (v == null) return '—';
   const sign = v > 0 ? '+' : v < 0 ? '-' : '';
   return sign + '$' + Math.abs(v).toFixed(0);
+}
+
+// ── ChartPane wrapper (bars from coord + per-RUN trades overlay) ────
+// Adapts the playground's bars+trades into the slot/ChartPane data
+// shape. Bars don't change between RUNs, so the chart stays mounted
+// and only the broker (trade markers) layer redraws on each RUN.
+function ChartPaneAdapter({ bars, trades, tf, setTf }) {
+  const data = useMemo(() => {
+    if (!bars) return null;
+    return {
+      bars,
+      broker: tradesToBroker(trades || []),
+      trades: tradesToBroker(trades || []),
+      decisions: [],
+      audit: [],
+    };
+  }, [bars, trades]);
+
+  if (!bars) {
+    return (
+      <div className="h-full flex items-center justify-center text-[11px] text-muted">
+        loading bars…
+      </div>
+    );
+  }
+  return (
+    <ChartPane
+      data={data}
+      tf={tf}
+      setTf={setTf}
+      runnerId="playground"
+      selectedTradeKey={null}
+      setSelectedTradeKey={() => {}}
+    />
+  );
+}
+
+// xovdV1Server trade -> ChartPane's broker-shape. Field names follow
+// HistoricalDataProvider.vizTradesToBroker so future merges stay
+// compatible if the legacy and live shapes converge.
+function tradesToBroker(trades) {
+  const DIR_TO_SIDE = { LONG: 'long', SHORT: 'short', L: 'long', S: 'short' };
+  const REASON_MAP = {
+    TP: 'tp', SL: 'sl', TRAIL: 'trail',
+    LIMIT: 'cross', MAXBARS: 'maxbars', SESSION: 'eostream', MARKET: 'cross',
+  };
+  return trades.map((t, i) => {
+    const dir = String(t.dir || (t.direction === 1 ? 'LONG' : 'SHORT')).toUpperCase();
+    const reason = String(t.exit_reason || t.reason || '').toUpperCase();
+    return {
+      trade_id: t.id ?? i,
+      side:     DIR_TO_SIDE[dir] || dir.toLowerCase(),
+      qty:      t.size ?? t.qty ?? 0,
+      entry_ts: (t.entry_time ?? Math.floor((t.entry_ns ?? 0) / 1e9)) * 1e9,
+      entry_px: t.entry_price ?? t.entry_px ?? 0,
+      exit_ts:  (t.exit_time ?? Math.floor((t.exit_ns ?? 0) / 1e9)) * 1e9,
+      exit_px:  t.exit_price ?? t.exit_px ?? 0,
+      pnl:      t.profit ?? t.profit_points ?? 0,
+      reason:   REASON_MAP[reason] || reason.toLowerCase(),
+      comm:     0,
+      sl_price: t.sl_price ?? 0,
+      tp_price: t.tp_price ?? 0,
+    };
+  });
 }
 
 // ── Equity curve (cumulative $ over trade index) ────────────────────
