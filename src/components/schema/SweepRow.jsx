@@ -114,7 +114,10 @@ function NumericRangeSlider({ def, recipe, onChange }) {
 
   return (
     <div className="flex items-center gap-3 min-w-0">
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+      {/* Range area gets 2x the flex grow of the step area so the
+          dual-thumb slider — the more dimensionally informative one —
+          stays the visual anchor as the form column resizes. */}
+      <div className="flex items-center gap-2 min-w-0" style={{ flex: '2 1 0%' }}>
         <span className="text-[10px] text-muted tnum w-12 text-right shrink-0">{fmt(recipe.start, isInt)}</span>
         <DualRangeSlider
           min={schemaMin}
@@ -126,8 +129,8 @@ function NumericRangeSlider({ def, recipe, onChange }) {
         />
         <span className="text-[10px] text-muted tnum w-12 text-left shrink-0">{fmt(recipe.stop, isInt)}</span>
       </div>
-      <div className="flex items-center gap-1 w-44 shrink-0">
-        <span className="text-[9px] text-muted/60 uppercase tracking-wide w-7">step</span>
+      <div className="flex items-center gap-1 min-w-0" style={{ flex: '1 1 0%' }}>
+        <span className="text-[9px] text-muted/60 uppercase tracking-wide w-7 shrink-0">step</span>
         <input
           type="range"
           min={minStep}
@@ -135,9 +138,9 @@ function NumericRangeSlider({ def, recipe, onChange }) {
           step={stepGran}
           value={Number(recipe.step) || minStep}
           onChange={(e) => set({ step: isInt ? Math.round(+e.target.value) : +e.target.value })}
-          className="flex-1"
+          className="flex-1 min-w-0"
         />
-        <span className="text-[10px] text-muted tnum w-10 text-right">{fmt(recipe.step, isInt)}</span>
+        <span className="text-[10px] text-muted tnum w-10 text-right shrink-0">{fmt(recipe.step, isInt)}</span>
       </div>
     </div>
   );
