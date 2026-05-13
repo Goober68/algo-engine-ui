@@ -203,20 +203,60 @@ function DualRangeSlider({ min, max, step, valueA, valueB, onChange }) {
   );
 }
 
-// ── Enum: fixed value vs multi-select sweep (unchanged from prior pass) ──
+// ── Enum: chip buttons in both modes ─────────────────────────────────
+// Fixed mode = radio (single chip highlighted). Sweep mode = multi-
+// select (any subset highlighted). Falls back to a dropdown when there
+// are too many options to fit on one line of chips.
+const ENUM_CHIP_THRESHOLD = 8;
+
 function EnumSweep({ def, recipe, isSwept, onChange }) {
   const options = Array.isArray(def.values) ? def.values : [];
+
+  if (options.length > ENUM_CHIP_THRESHOLD) {
+    // Many options -- chips would wrap unpleasantly; use a dropdown.
+    if (!isSwept) {
+      return (
+        <select
+          value={recipe.fixed ?? def.default}
+          onChange={(e) => onChange({ ...recipe, fixed: e.target.value })}
+          className="w-32 px-2 py-0.5 bg-bg border border-border rounded text-text text-[11px]"
+        >
+          {options.map(o => <option key={String(o)} value={String(o)}>{String(o)}</option>)}
+        </select>
+      );
+    }
+    // Sweep mode with many options: render the multi-select chips
+    // anyway since "the swept set" is intrinsically a list, not a
+    // single picker.
+  }
+
   if (!isSwept) {
+    const current = String(recipe.fixed ?? def.default);
     return (
-      <select
-        value={recipe.fixed ?? def.default}
-        onChange={(e) => onChange({ ...recipe, fixed: e.target.value })}
-        className="w-32 px-2 py-0.5 bg-bg border border-border rounded text-text text-[11px]"
-      >
-        {options.map(o => <option key={String(o)} value={String(o)}>{String(o)}</option>)}
-      </select>
+      <div className="flex flex-wrap gap-1">
+        {options.map(o => {
+          const v = String(o);
+          const on = v === current;
+          return (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onChange({ ...recipe, fixed: v })}
+              className={
+                'px-1.5 py-0.5 rounded border text-[10px] ' +
+                (on
+                  ? 'bg-accent/20 text-accent border-accent/60'
+                  : 'bg-bg text-muted border-border hover:border-muted')
+              }
+            >
+              {v}
+            </button>
+          );
+        })}
+      </div>
     );
   }
+
   const selected = new Set(recipe.values || [def.default]);
   const toggle = (v) => {
     const s = new Set(selected);
