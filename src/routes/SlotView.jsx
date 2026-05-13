@@ -6,7 +6,10 @@ import ChartPane from '../components/slot/ChartPane';
 import EquityMini from '../components/slot/EquityMini';
 import TradeTable from '../components/slot/TradeTable';
 import LogsDrawer from '../components/slot/LogsDrawer';
-import StrategyStatePanel from '../components/slot/StrategyStatePanel';
+// StrategyStatePanel temporarily removed from the UI (per user 2026-05-12)
+// — the chart's per-bar gate hover tooltip subsumes its main purpose.
+// Keep the import/JSX commented (not deleted) in case it comes back.
+// import StrategyStatePanel from '../components/slot/StrategyStatePanel';
 import TradeTickModal from '../components/slot/TradeTickModal';
 import Splitter from '../components/chrome/Splitter';
 import { usePersistedSize } from '../components/chrome/usePersistedSize';
@@ -67,10 +70,11 @@ export default function SlotView() {
           <div className="bg-panel" style={{ height: equityPx }}>
             <EquityMini data={data} />
           </div>
-          <Splitter dir="row" size={statePx} setSize={setStatePx} min={120} max={600} invert />
-          <div className="overflow-y-auto bg-panel2" style={{ height: statePx }}>
-            <StrategyStatePanel data={data} />
-          </div>
+          {/* StrategyStatePanel removed — keep markup for easy revival.
+              <Splitter dir="row" size={statePx} setSize={setStatePx} min={120} max={600} invert />
+              <div className="overflow-y-auto bg-panel2" style={{ height: statePx }}>
+                <StrategyStatePanel data={data} />
+              </div> */}
         </div>
       </div>
       <Splitter dir="row" size={drawerPx} setSize={setDrawerPx} min={28} max={500} invert />
