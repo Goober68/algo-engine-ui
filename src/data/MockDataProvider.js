@@ -16,10 +16,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { subscribe, SSE_ENABLED } from './eventBus';
+import { activeCoord, listCoords, subscribeCoordChange } from './coords';
 
-const COORD = import.meta.env.VITE_ALGO_COORD_URL?.replace(/\/+$/, '') || '';
+// Active coord URL — read fresh on each request via coordUrl(), not
+// captured at module load. Lets the UI's CoordSelector hot-swap which
+// coord serves runner data without a page reload.
 const FIXTURE_RUN = 'live_2026_05_10';
-const REAL = COORD.length > 0;
+const REAL = listCoords().length > 0;
+const coordUrl = () => activeCoord()?.url || '';
 
 const cache = new Map();
 
@@ -50,16 +54,16 @@ async function loadJsonl(path) {
 // ── Path resolution: mock vs real ────────────────────────────────────
 
 function registryUrl() {
-  return REAL ? `${COORD}/runners` : '/runners.json';
+  return REAL ? `${coordUrl()}/runners` : '/runners.json';
 }
 function metaUrl(runnerId) {
-  return REAL ? `${COORD}/r/${runnerId}/meta` : `/${FIXTURE_RUN}/meta.json`;
+  return REAL ? `${coordUrl()}/r/${runnerId}/meta` : `/${FIXTURE_RUN}/meta.json`;
 }
 function slotFileUrl(runnerId, slotIdx, file) {
   // Mock files end in .jsonl; real files have no extension (NDJSON content-type).
   if (REAL) {
     const trim = file.replace(/\.jsonl$/, '');
-    return `${COORD}/r/${runnerId}/s/${slotIdx}/${trim}`;
+    return `${coordUrl()}/r/${runnerId}/s/${slotIdx}/${trim}`;
   }
   return `/${FIXTURE_RUN}/slot${slotIdx}/${file}`;
 }
@@ -327,7 +331,7 @@ export function useRunnerLogs(runnerId, kind, maxLines = 500) {
     if (!runnerId || !kind) return;
     setLines([]);
     if (!REAL) return;
-    fetch(`${COORD}/r/${runnerId}/logs/${kind}/initial?lines=200`)
+    fetch(`${coordUrl()}/r/${runnerId}/logs/${kind}/initial?lines=200`)
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         if (j?.lines) setLines(j.lines);
@@ -407,4 +411,6 @@ export function useLiveTick(runnerId) {
 
 // Diagnostic export so the UI can show "mock" or "coord" mode.
 export const DATA_MODE = REAL ? 'coord' : 'mock';
-export const DATA_SOURCE_URL = REAL ? COORD : '/fixtures';
+// Legacy single-coord export. New code should use activeCoord() from
+// './coords' so it stays in sync when the user switches coords.
+export const DATA_SOURCE_URL = REAL ? coordUrl() : '/fixtures';

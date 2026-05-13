@@ -3,8 +3,13 @@ import RunnersList from './routes/RunnersList';
 import RunnerOverview from './routes/RunnerOverview';
 import SlotView from './routes/SlotView';
 import RunBrowser from './routes/RunBrowser';
+import HistoricalSxS from './routes/HistoricalSxS';
+import HistoricalSingle from './routes/HistoricalSingle';
+import HistoricalPlayground from './routes/HistoricalPlayground';
 import Settings from './routes/Settings';
 import { useRunMeta, useRunners, useRunnersRegistry, DATA_MODE, DATA_SOURCE_URL } from './data/MockDataProvider';
+import { activeCoord, listCoords } from './data/coords';
+import CoordSelector from './components/chrome/CoordSelector';
 
 export default function App() {
   return (
@@ -20,6 +25,10 @@ export default function App() {
             <Route path="s/:n"            element={<SlotView />} />
           </Route>
           <Route path="/runs"             element={<RunBrowser />} />
+          <Route path="/historical"       element={<Navigate to="/historical/sxs" replace />} />
+          <Route path="/historical/sxs"        element={<HistoricalSxS />} />
+          <Route path="/historical/single"     element={<HistoricalSingle />} />
+          <Route path="/historical/playground" element={<HistoricalPlayground />} />
           <Route path="/settings"         element={<Settings />} />
           <Route path="*"                 element={<Navigate to="/" replace />} />
         </Routes>
@@ -40,21 +49,31 @@ function TopHeader() {
       <nav className="flex gap-0.5 text-xs ml-3">
         <Tab1 to="/" match={['/', '/r/*']}>Runners</Tab1>
         <Tab1 to="/runs">Runs</Tab1>
+        <Tab1 to="/historical">Historical</Tab1>
         <Tab1 to="/settings">Settings</Tab1>
       </nav>
-      <span className="ml-auto text-[11px] text-muted tnum">
-        {DATA_MODE === 'coord'
-          ? <>coord · <span className="text-text">{DATA_SOURCE_URL}</span></>
-          : <>mock</>}
-      </span>
+      <div className="ml-auto flex items-center gap-2">
+        <CoordSelector />
+        {listCoords().length <= 1 && (
+          <span className="text-[11px] text-muted tnum">
+            {DATA_MODE === 'coord'
+              ? <>coord · <span className="text-text">{DATA_SOURCE_URL}</span></>
+              : <>mock</>}
+          </span>
+        )}
+      </div>
     </header>
   );
 }
 
-// Row 2 — runner tabs. Visible only when in Runners mode (path is `/`
-// or `/r/...`). Hidden on Runs/Settings.
+// Row 2 — context-sensitive nav. Renders runner tabs in Runners mode,
+// or the Historical sub-mode tabs (SxS · Single · Playground) when the
+// path is /historical/*. Hidden everywhere else.
 function NavRow2() {
   const location = useLocation();
+  if (location.pathname.startsWith('/historical/')) {
+    return <NavRow2Historical />;
+  }
   const runners = useRunners();
   const matchRunner = useMatch('/r/:id/*');
   const matchRunnerExact = useMatch('/r/:id');
@@ -81,6 +100,26 @@ function NavRow2() {
           </button>
         </>
       )}
+    </div>
+  );
+}
+
+// Row-2 variant: Historical sub-modes. Three tabs styled like the
+// runner-instance Tab2 chips so the chrome reads identically.
+function NavRow2Historical() {
+  const location = useLocation();
+  const tabs = [
+    { to: '/historical/sxs',        label: 'Side-by-side' },
+    { to: '/historical/single',     label: 'Single' },
+    { to: '/historical/playground', label: 'Playground' },
+  ];
+  return (
+    <div className="flex items-center gap-1 px-3 py-0.5 bg-panel2 border-b border-border text-xs">
+      {tabs.map(t => (
+        <Tab2 key={t.to} to={t.to} active={location.pathname === t.to}>
+          {t.label}
+        </Tab2>
+      ))}
     </div>
   );
 }

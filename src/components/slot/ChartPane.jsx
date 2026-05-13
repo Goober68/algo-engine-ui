@@ -49,7 +49,7 @@ const TF_OPTIONS = [
   { sec: 3600, label: 'H1' },
 ];
 
-export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelectedTradeKey, runnerId }) {
+export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelectedTradeKey, runnerId, onChartReady }) {
   const wrapRef = useRef(null);
   const chartDivRef = useRef(null);
   const overlayRef = useRef(null);
@@ -142,6 +142,9 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
     // the chart instance is now usable. setChartReady triggers a
     // re-render so they get a chance to bind.
     setChartReady(true);
+    // Notify external owners (e.g. Historical's side-by-side time-scale
+    // sync) that the chart instance is available. Fires once at mount.
+    if (onChartReady) onChartReady(chart);
 
     // Save logical-range to localStorage on every user pan/zoom (debounced).
     // Logical range survives bar-append better than time range — when a new
@@ -215,7 +218,11 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
           if (found) {
             const inTrade = (found.open_qty || 0) !== 0;
             const cls = inTrade ? null : classifyDecision(found);
-            if (cls && cls.endsWith('_dim')) {
+            // Fire on ANY classified bar — both _dim (gate blocked the
+            // attempt) AND _bright (all gates passed, order placed).
+            // Both carry the same Contributors and the gate breakdown
+            // is informative either way.
+            if (cls) {
               cand = { x: param.point.x, y: param.point.y, decision: found, tSec };
             }
           }
@@ -483,16 +490,26 @@ function GateHoverTip({ x, y, decision, wrapRef }) {
   const wrapW = wrap?.clientWidth  || 0;
   const wrapH = wrap?.clientHeight || 0;
   const isAlgoBlocked = decision.blocked_layer === 'algo';
-  const W = 240;
-  // Tooltip grows when we drill into the algo sub-list (6 extra rows).
-  const H = isAlgoBlocked ? 240 : 130;
+  const x_ = decision.xovd || {};
+  const hasContrib = x_.dist_raw_primary !== undefined
+                  || x_.too_far_band !== undefined
+                  || x_.atr_for_proximity !== undefined;
+  const W = 280;
+  // Tooltip grows when we drill into the algo sub-list (6 extra rows)
+  // and again when contributors are bundled.
+  let H = 130;
+  if (isAlgoBlocked) H += 110;
+  if (hasContrib)    H += 200;
   // Default: above-right of cursor. Flip if it would overflow.
   let left = x + 14;
   let top  = y - H - 14;
   if (left + W > wrapW) left = x - W - 14;
   if (top < 0)          top  = y + 14;
   if (top + H > wrapH)  top  = Math.max(0, wrapH - H - 2);
-  const blockedIdx = GATE_HOVER_LAYERS.indexOf(decision.blocked_layer);
+  // When nothing blocked (order placed), pretend blockedIdx is
+  // past-end so all four layers render as ✓ rather than muted '·'.
+  const rawIdx = GATE_HOVER_LAYERS.indexOf(decision.blocked_layer);
+  const blockedIdx = (rawIdx < 0) ? GATE_HOVER_LAYERS.length : rawIdx;
   const failGate = decision[`${decision.blocked_layer}_gate`];
   // Display value for the failing gate header: if algo, decode to name.
   const failDisplay = isAlgoBlocked
@@ -547,9 +564,51 @@ function GateHoverTip({ x, y, decision, wrapRef }) {
             })}
           </div>
         )}
+        {hasContrib && (
+          <div className="mt-1 pt-1 border-t border-border/60">
+            <div className="text-[10px] uppercase tracking-wide text-muted mb-0.5">contributors</div>
+            <ContribRow k="state"          v={x_.state} />
+            <ContribRow k="close"          v={fmt(x_.close, 2)} />
+            <ContribRow k="prev_close"     v={fmt(x_.prev_close, 2)} />
+            <ContribRow k="fast_ma"        v={fmt(x_.fast_ma, 4)} />
+            <ContribRow k="slow_ma"        v={fmt(x_.slow_ma, 4)} />
+            <ContribRow k="atr"            v={fmt(x_.atr, 4)} />
+            <ContribRow k="entry_limit"    v={fmt(decision.entry_limit, 2)} />
+            <ContribRow k="dist_raw"       v={fmt(x_.dist_raw_primary, 4)} />
+            <ContribRow k="dist_clamp"     v={CLAMP_NAMES[x_.dist_clamp_primary] ?? x_.dist_clamp_primary} />
+            <ContribRow k="too_far_band"   v={fmt(x_.too_far_band, 4)} />
+            <ContribRow k="atr_for_prox"   v={fmt(x_.atr_for_proximity, 4)} />
+            <ContribRow k="bars_above_long" v={x_.bars_above_long} />
+            <ContribRow k="bars_above_short" v={x_.bars_above_short} />
+            <ContribRow k="bars_below_long" v={x_.bars_below_long} />
+            <ContribRow k="bars_below_short" v={x_.bars_below_short} />
+            <ContribRow k="bars_after_x_up" v={x_.bars_after_x_up} />
+            <ContribRow k="bars_after_x_dn" v={x_.bars_after_x_dn} />
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+// dist_clamp_* enum (from algobot/strategy/xovdV1.h). 0 = none, 1 = buffer
+// floor, 2 = ema-cap. Names rendered straight, no derivation.
+const CLAMP_NAMES = ['none', 'buffer', 'ema-cap'];
+
+function ContribRow({ k, v }) {
+  return (
+    <div className="flex items-baseline gap-2 leading-tight">
+      <span className="text-muted text-[11px] w-32">{k}</span>
+      <span className="text-text text-[11px]">{v ?? '—'}</span>
+    </div>
+  );
+}
+
+// Light formatter: numbers to fixed precision; pass-through everything else.
+function fmt(v, dp) {
+  if (v == null) return null;
+  if (typeof v !== 'number') return v;
+  return v.toFixed(dp);
 }
 
 function BarCloseCountdown({ periodSec }) {
