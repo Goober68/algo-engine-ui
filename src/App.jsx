@@ -6,6 +6,7 @@ import RunBrowser from './routes/RunBrowser';
 import HistoricalSxS from './routes/HistoricalSxS';
 import HistoricalSingle from './routes/HistoricalSingle';
 import HistoricalPlayground from './routes/HistoricalPlayground';
+import HistoricalSweeps from './routes/HistoricalSweeps';
 import Settings from './routes/Settings';
 import { useRunMeta, useRunners, useRunnersRegistry, DATA_MODE, DATA_SOURCE_URL } from './data/MockDataProvider';
 import { activeCoord, listCoords } from './data/coords';
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/historical/sxs"        element={<HistoricalSxS />} />
           <Route path="/historical/single"     element={<HistoricalSingle />} />
           <Route path="/historical/playground" element={<HistoricalPlayground />} />
+          <Route path="/historical/sweeps"     element={<HistoricalSweeps />} />
           <Route path="/settings"         element={<Settings />} />
           <Route path="*"                 element={<Navigate to="/" replace />} />
         </Routes>
@@ -112,6 +114,7 @@ function NavRow2Historical() {
     { to: '/historical/sxs',        label: 'Side-by-side' },
     { to: '/historical/single',     label: 'Single' },
     { to: '/historical/playground', label: 'Playground' },
+    { to: '/historical/sweeps',     label: 'Sweeps' },
   ];
   return (
     <div className="flex items-center gap-1 px-3 py-0.5 bg-panel2 border-b border-border text-xs">
