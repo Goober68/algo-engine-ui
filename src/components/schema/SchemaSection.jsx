@@ -28,7 +28,7 @@ export default function SchemaSection({
     <div className="border-b border-border/40">
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full px-3 py-1.5 flex items-center gap-1.5 hover:bg-accent/5 text-left"
+        className="w-full px-3 py-1 flex items-center gap-1.5 hover:bg-accent/5 text-left"
       >
         <span
           className={'inline-block text-muted text-[10px] transition-transform ' +
@@ -44,7 +44,7 @@ export default function SchemaSection({
         )}
       </button>
       {open && (
-        <div className="pb-1">
+        <div className="pb-px">
           {children}
         </div>
       )}

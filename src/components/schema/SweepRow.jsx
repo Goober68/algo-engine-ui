@@ -20,7 +20,7 @@ export default function SweepRow({ schemaField, recipe, onChange }) {
   const count = configCountForRow(def, recipe);
 
   return (
-    <div className="px-3 py-1 border-b border-border/20 hover:bg-accent/[0.03]">
+    <div className="px-3 py-px border-b border-border/20 hover:bg-accent/[0.03]">
       <div className="flex items-center gap-2">
         <Header def={def} isSwept={isSwept} sweepableInSchema={sweepableInSchema}
                 onToggle={() => onChange({ ...recipe, swept: !isSwept })} />
