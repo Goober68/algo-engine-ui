@@ -37,7 +37,10 @@ export function getDefaults() { return DEFAULTS; }
 // to override the env defaults.
 export async function submitSweep(recipePayload, overrides = {}) {
   const body = { ...(DEFAULTS || {}), ...overrides, ...recipePayload };
-  const required = ['binary', 'bars', 'ticks', 'strategy', 'recipe'];
+  // `binary` is no longer required from the UI -- coord resolves the
+  // path per target via [target.<name>.binaries] in coord_config.toml.
+  // Pass `binary` in overrides if you want to bypass that lookup.
+  const required = ['bars', 'ticks', 'strategy', 'recipe'];
   const missing = required.filter(k => !body[k]);
   if (missing.length) {
     throw new Error(
