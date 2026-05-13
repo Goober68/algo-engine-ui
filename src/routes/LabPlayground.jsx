@@ -121,6 +121,11 @@ export default function LabPlayground() {
     }
   }, [values]);
 
+  // Hoist before the early returns -- React needs the same hook order
+  // every render (the schema-loading guard would otherwise skip it on
+  // first render and trigger "Rendered more hooks" once schema arrives).
+  const tradeStats = useMemo(() => computeTradeStats(trades, STARTING_BAL), [trades]);
+
   if (schemaErr) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center text-xs text-short">
@@ -149,13 +154,13 @@ export default function LabPlayground() {
           onChange={onSliderChange}
         />
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
-          <StatsStrip stats={stats} />
+          <KpiStrip stats={tradeStats} />
           {/* Chart 50% / equity 30% / trades 20% per Niall direction. */}
           <div className="min-h-0" style={{ flex: '0 0 50%' }}>
             <ChartPaneAdapter bars={chartBars} trades={trades} tf={tf} setTf={setTf} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
-            <EquityCurve trades={trades} />
+            <EquityCurve stats={tradeStats} />
           </div>
           <div className="min-h-0 overflow-y-auto border-t border-border" style={{ flex: '0 0 20%' }}>
             <TradesTable trades={trades} />
@@ -165,6 +170,13 @@ export default function LabPlayground() {
     </div>
   );
 }
+
+// Starting account balance assumption for the % return KPI. TV's
+// strategy report assumes a starting balance too -- this should
+// eventually move to a per-session setting (or come from the .set
+// file). For now, $50K matches the apparent starting balance in the
+// reference screenshot and is a typical futures-account size.
+const STARTING_BAL = 50_000;
 
 // ── Toolbar (session status + manual Run button + last-run timing) ──
 function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
@@ -284,8 +296,49 @@ function groupFieldsBySection(schema, fields) {
   return out;
 }
 
-// ── Stats strip ─────────────────────────────────────────────────────
-function StatsStrip({ stats }) {
+// Single-pass walk over trades that produces every stat the KPI strip
+// + equity curve consume. Done once per RUN; both panels read off
+// this so we don't double-walk the array.
+function computeTradeStats(trades, startingBal = 50_000) {
+  if (!trades?.length) return null;
+  let cum = 0, peak = 0, maxDD = 0, peakAtMaxDD = peak;
+  let wins = 0, losses = 0, sumWin = 0, sumLoss = 0;
+  const equity = new Array(trades.length);
+  const pnls   = new Array(trades.length);
+  let absMaxPnl = 0;
+  for (let i = 0; i < trades.length; i++) {
+    const t = trades[i];
+    const p = Number(t.profit ?? t.profit_points ?? 0) || 0;
+    pnls[i] = p;
+    if (p > 0) { wins++;   sumWin  += p; }
+    if (p < 0) { losses++; sumLoss += -p; }
+    const ap = Math.abs(p);
+    if (ap > absMaxPnl) absMaxPnl = ap;
+    cum += p;
+    equity[i] = cum;
+    if (cum > peak) peak = cum;
+    const dd = peak - cum;
+    if (dd > maxDD) { maxDD = dd; peakAtMaxDD = peak; }
+  }
+  const n      = trades.length;
+  const wrPct  = n ? (wins / n) * 100 : 0;
+  const pf     = sumLoss > 0 ? sumWin / sumLoss : (sumWin > 0 ? Infinity : 0);
+  const retPct = startingBal > 0 ? (cum / startingBal) * 100 : 0;
+  // Max DD as % is computed against the equity peak that produced it
+  // (TradingView's "Max equity drawdown %"). Falls back to startingBal
+  // if peak < 0 (degenerate).
+  const ddBase = Math.max(startingBal, peakAtMaxDD + startingBal, 1);
+  const ddPct  = (maxDD / ddBase) * 100;
+  return {
+    n, wins, losses, sumWin, sumLoss, wrPct, pf,
+    finalPnl: cum, peak, maxDD, ddPct,
+    retPct, startingBal,
+    equity, pnls, absMaxPnl,
+  };
+}
+
+// ── KPI strip (TV-style: total / DD / count / hit rate / PF) ─────────
+function KpiStrip({ stats }) {
   if (!stats) {
     return (
       <div className="bg-panel border-b border-border px-3 py-3 text-[11px] text-muted italic">
@@ -293,41 +346,49 @@ function StatsStrip({ stats }) {
       </div>
     );
   }
-  // The new xovdV1Server schema uses string keys: trades/wins/losses/profit/wall_ms.
-  // Legacy uses n_trades/n_wins/n_losses/total_pnl_points. Cover both.
-  const n      = stats.trades      ?? stats.n_trades      ?? 0;
-  const wins   = stats.wins        ?? stats.n_wins        ?? 0;
-  const losses = stats.losses      ?? stats.n_losses      ?? 0;
-  const wr     = n ? Math.round((wins / n) * 100) : 0;
-  const profit = stats.profit      ?? stats.total_pnl_points ?? 0;
-  const pf     = (losses === 0) ? '∞'
-                 : (wins === 0) ? '0'
-                 : ((wins * (profit > 0 ? profit / wins : 1)) /
-                    Math.max(1, losses * (profit < 0 ? -profit / losses : 1))).toFixed(2);
+  const { n, wins, finalPnl, retPct, maxDD, ddPct, wrPct, pf } = stats;
+  const pnlCls = finalPnl >= 0 ? 'text-long' : 'text-short';
   return (
-    <div className="bg-panel border-b border-border px-3 py-2 flex items-center gap-6 tnum">
-      <Cell label="trades" v={n} />
-      <Cell label="wins"   v={wins}   cls="text-long" />
-      <Cell label="losses" v={losses} cls="text-short" />
-      <Cell label="WR"     v={`${wr}%`} cls={wrCls(wr)} />
-      <Cell label="PF"     v={pf} />
-      <Cell label="profit" v={fmtUSD(profit)} cls={profit >= 0 ? 'text-long' : 'text-short'} />
+    <div className="bg-panel border-b border-border px-3 py-2 flex items-baseline gap-8 tnum">
+      <Kpi label="Total P&L"
+           main={<span className={pnlCls}>{fmtUSD(finalPnl)}</span>}
+           sub={<span className={pnlCls}>{fmtPct(retPct, true)}</span>} />
+      <Kpi label="Max DD"
+           main={<span className="text-short">{fmtUSD(-maxDD)}</span>}
+           sub={<span className="text-short">{fmtPct(-ddPct, false)}</span>} />
+      <Kpi label="Total trades" main={n.toLocaleString()} />
+      <Kpi label="Profitable"
+           main={<span className={wrPct >= 50 ? 'text-long' : 'text-text'}>
+             {fmtPct(wrPct, false)}
+           </span>}
+           sub={<span className="text-muted">{wins}/{n}</span>} />
+      <Kpi label="Profit factor"
+           main={<span className={pf >= 1 ? 'text-long' : 'text-short'}>
+             {Number.isFinite(pf) ? pf.toFixed(2) : '∞'}
+           </span>} />
     </div>
   );
 }
-function Cell({ label, v, cls = '' }) {
+function Kpi({ label, main, sub }) {
   return (
-    <span className="flex items-baseline gap-1">
+    <span className="flex flex-col leading-tight">
       <span className="text-muted text-[10px] uppercase tracking-wide">{label}</span>
-      <span className={`text-sm font-semibold ${cls}`}>{v}</span>
+      <span className="text-sm font-semibold tnum">
+        {main}{sub != null && <span className="text-[11px] ml-1.5">{sub}</span>}
+      </span>
     </span>
   );
 }
-function wrCls(wr) { return wr >= 70 ? 'text-long' : wr >= 30 ? 'text-text' : 'text-short'; }
+
 function fmtUSD(v) {
   if (v == null) return '—';
   const sign = v > 0 ? '+' : v < 0 ? '-' : '';
   return sign + '$' + Math.abs(v).toFixed(0);
+}
+function fmtPct(v, withSign) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const sign = withSign && v > 0 ? '+' : '';
+  return `${sign}${v.toFixed(2)}%`;
 }
 
 // ── ChartPane wrapper (bars from coord + per-RUN trades overlay) ────
@@ -394,65 +455,120 @@ function tradesToBroker(trades) {
   });
 }
 
-// ── Equity curve (cumulative $ over trade index) ────────────────────
-// Restored from the legacy strategy-visualizer/playground.html canvas.
-// One point per trade; line color tracks final-PnL sign. Tracks the
-// peak so a drawdown shading is trivial to add later.
-function EquityCurve({ trades }) {
-  const series = useMemo(() => {
-    if (!trades?.length) return null;
-    let cum = 0, peak = 0, maxDD = 0;
-    const pts = trades.map((t, i) => {
-      const p = t.profit ?? t.profit_points ?? 0;
-      cum += Number(p) || 0;
-      if (cum > peak) peak = cum;
-      const dd = peak - cum;
-      if (dd > maxDD) maxDD = dd;
-      return { i, cum };
-    });
-    const lo = Math.min(0, ...pts.map(p => p.cum));
-    const hi = Math.max(0, ...pts.map(p => p.cum));
-    return { pts, lo, hi, final: cum, peak, maxDD };
-  }, [trades]);
-
-  if (!series) {
+// ── Equity curve + per-trade profit bars + right-edge $ axis ────────
+// SVG layout (fixed viewBox W*H, preserveAspectRatio=none for stretch):
+//   [equity track]   y in [0, H_EQ]              cumulative-$ line
+//   [bar track]      y in [H_EQ + GAP, H]        per-trade green/red bars
+//   right-edge labels: $ ticks on the equity axis
+function EquityCurve({ stats }) {
+  if (!stats) {
     return (
       <div className="bg-panel border-b border-border px-3 py-2 text-[10px] text-muted/70 italic h-full">
-        Equity curve — run a sweep / drag a slider to populate.
+        Equity curve -- drag a slider or click Run to populate.
       </div>
     );
   }
+  const { equity, pnls, finalPnl, peak, maxDD, absMaxPnl } = stats;
+  const n = equity.length;
 
-  // Inline SVG fills the flex-1 container so the curve grows when the
-  // panel below (trades) shrinks. preserveAspectRatio=none lets the
-  // viewBox stretch vertically — fine for a sparkline.
-  const W = 800, H = 200, PAD = 4;
-  const { pts, lo, hi, final, peak, maxDD } = series;
+  // viewBox math. Right-pad reserves room for the $ tick labels.
+  const W = 1000, H = 240, PAD_L = 4, PAD_R = 60;
+  const H_EQ = Math.round(H * 0.72);   // equity track
+  const GAP  = 4;
+  const BAR_TOP = H_EQ + GAP;
+  const BAR_H   = H - BAR_TOP - 2;     // per-trade bars track
+
+  const lo = Math.min(0, ...equity);
+  const hi = Math.max(0, ...equity);
   const span = (hi - lo) || 1;
-  const xOf = (i) => PAD + (i / Math.max(1, pts.length - 1)) * (W - 2 * PAD);
-  const yOf = (v) => H - PAD - ((v - lo) / span) * (H - 2 * PAD);
+  const xOf = (i) => PAD_L + (i / Math.max(1, n - 1)) * (W - PAD_L - PAD_R);
+  const yOf = (v) => H_EQ - 2 - ((v - lo) / span) * (H_EQ - 4);
   const zeroY = yOf(0);
-  const path = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xOf(p.i).toFixed(1)},${yOf(p.cum).toFixed(1)}`).join(' ');
-  const stroke = final >= 0 ? '#26a69a' : '#ef5350';   // long / short
+  const path  = equity.map((v, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
+  const stroke = finalPnl >= 0 ? '#26a69a' : '#ef5350';
+  const ticks = niceTicks(lo, hi, 4);
+
+  // Per-trade bars: each trade gets one bar. For dense series, the bar
+  // width may be < 1px — that's fine, browsers anti-alias and the
+  // overall shape conveys streaks/concentration.
+  const barW = Math.max(1, (W - PAD_L - PAD_R) / Math.max(1, n) - 0.5);
+  const barX0 = (i) => xOf(i) - barW / 2;
+  const hOf = (p) => (absMaxPnl > 0 ? (Math.abs(p) / absMaxPnl) * (BAR_H / 2 - 1) : 0);
+  const barMid = BAR_TOP + BAR_H / 2;
 
   return (
     <div className="bg-panel px-3 py-1 h-full flex flex-col min-h-0">
       <div className="flex items-baseline gap-4 text-[10px] shrink-0">
         <span className="text-muted uppercase tracking-wide">equity</span>
-        <span className={'tnum font-semibold ' + (final >= 0 ? 'text-long' : 'text-short')}>
-          {fmtUSD(final)}
+        <span className={'tnum font-semibold ' + (finalPnl >= 0 ? 'text-long' : 'text-short')}>
+          {fmtUSD(finalPnl)}
         </span>
         <span className="text-muted tnum">peak <span className="text-text">{fmtUSD(peak)}</span></span>
         <span className="text-muted tnum">max DD <span className="text-short">{fmtUSD(-maxDD)}</span></span>
+        <span className="ml-auto text-[9px] text-muted/60 uppercase tracking-wide">trade #</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
            className="block w-full flex-1 min-h-0">
-        <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY}
-              stroke="#2a2e36" strokeWidth="1" strokeDasharray="2 3" />
+        {/* Y-axis grid + $ labels */}
+        {ticks.map((v, k) => {
+          const y = yOf(v);
+          return (
+            <g key={k}>
+              <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y}
+                    stroke="#2a2e36" strokeWidth="0.5"
+                    strokeDasharray={v === 0 ? '0' : '2 3'} />
+              <text x={W - PAD_R + 4} y={y + 3}
+                    fontSize="10" fill="#7c8190"
+                    fontFamily="ui-monospace, Menlo, Consolas, monospace">
+                {fmtAxis(v)}
+              </text>
+            </g>
+          );
+        })}
+        {/* Zero reference inside the bar track */}
+        <line x1={PAD_L} y1={barMid} x2={W - PAD_R} y2={barMid}
+              stroke="#2a2e36" strokeWidth="0.5" />
+        {/* Per-trade bars */}
+        {pnls.map((p, i) => {
+          if (!p) return null;
+          const h = hOf(p);
+          const y = p > 0 ? barMid - h : barMid;
+          return (
+            <rect key={i}
+                  x={barX0(i)} y={y}
+                  width={barW} height={Math.max(0.5, h)}
+                  fill={p > 0 ? '#26a69a' : '#ef5350'}
+                  opacity="0.7" />
+          );
+        })}
+        {/* Equity line on top */}
         <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
       </svg>
     </div>
   );
+}
+
+// Pick ~n nice round-number ticks across [lo, hi]. Heuristic ladder
+// (1, 2, 5, 10 x power of 10) — same flavor as d3.ticks() without
+// the dependency.
+function niceTicks(lo, hi, target = 4) {
+  const span = hi - lo;
+  if (span <= 0) return [lo];
+  const rough = span / target;
+  const mag   = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm  = rough / mag;
+  const step  = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  const start = Math.ceil(lo / step) * step;
+  const out   = [];
+  for (let v = start; v <= hi + 1e-9; v += step) out.push(Math.round(v / step) * step);
+  return out;
+}
+function fmtAxis(v) {
+  const a = Math.abs(v);
+  const sign = v < 0 ? '-' : '';
+  if (a >= 1_000_000) return `${sign}$${(a / 1_000_000).toFixed(1)}M`;
+  if (a >= 1000)      return `${sign}$${Math.round(a / 1000)}K`;
+  return `${sign}$${Math.round(a)}`;
 }
 
 // ── Trades table ────────────────────────────────────────────────────
