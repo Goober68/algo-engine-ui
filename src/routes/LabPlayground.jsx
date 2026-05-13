@@ -16,7 +16,7 @@ const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
 const LS_AUTOSAVE = 'playground.autosave.v1';
 
-export default function HistoricalPlayground() {
+export default function LabPlayground() {
   const [schema, setSchema]       = useState(null);
   const [schemaErr, setSchemaErr] = useState(null);
   const [values, setValues]       = useState(null);    // current slider values, ordered per playground_fields

@@ -16,12 +16,12 @@ import {
 // as localStorage keys so add new scopes here as new tabs land.
 export function scopeForPath(pathname) {
   if (!pathname || pathname === '/') return 'runners';
-  if (pathname.startsWith('/r/'))                return 'runners';
-  if (pathname === '/runs')                       return 'runners';
-  if (pathname.startsWith('/historical/playground')) return 'playground';
-  if (pathname.startsWith('/historical/sweeps'))     return 'sweep';
-  if (pathname.startsWith('/historical/'))          return 'historical';
-  if (pathname === '/settings')                   return 'runners';   // no coord need
+  if (pathname.startsWith('/r/'))            return 'runners';
+  if (pathname === '/runs')                   return 'runners';
+  if (pathname.startsWith('/lab/playground')) return 'playground';
+  if (pathname.startsWith('/lab/sweeps'))     return 'sweep';
+  if (pathname.startsWith('/historical/'))    return 'historical';
+  if (pathname === '/settings')               return 'runners';   // no coord need
   return 'runners';
 }
 

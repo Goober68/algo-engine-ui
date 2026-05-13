@@ -113,7 +113,7 @@ export async function sendRun(params) {
 
 // React hook — same surface as the WS client had.
 export function useWsStatus() {
-  // Name kept ('useWsStatus') so HistoricalPlayground.jsx doesn't have
+  // Name kept ('useWsStatus') so LabPlayground.jsx doesn't have
   // to change. Actually returns coord-session status now.
   const [s, setS] = useState(status);
   useEffect(() => {

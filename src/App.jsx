@@ -5,11 +5,10 @@ import SlotView from './routes/SlotView';
 import RunBrowser from './routes/RunBrowser';
 import HistoricalSxS from './routes/HistoricalSxS';
 import HistoricalSingle from './routes/HistoricalSingle';
-import HistoricalPlayground from './routes/HistoricalPlayground';
-import HistoricalSweeps from './routes/HistoricalSweeps';
+import LabPlayground from './routes/LabPlayground';
+import LabSweeps from './routes/LabSweeps';
 import Settings from './routes/Settings';
-import { useRunMeta, useRunners, useRunnersRegistry, DATA_MODE, DATA_SOURCE_URL } from './data/MockDataProvider';
-import { activeCoord, listCoords } from './data/coords';
+import { useRunMeta, useRunners } from './data/MockDataProvider';
 import CoordSelector from './components/chrome/CoordSelector';
 
 export default function App() {
@@ -26,11 +25,12 @@ export default function App() {
             <Route path="s/:n"            element={<SlotView />} />
           </Route>
           <Route path="/runs"             element={<RunBrowser />} />
+          <Route path="/lab"              element={<Navigate to="/lab/playground" replace />} />
+          <Route path="/lab/playground"   element={<LabPlayground />} />
+          <Route path="/lab/sweeps"       element={<LabSweeps />} />
           <Route path="/historical"       element={<Navigate to="/historical/sxs" replace />} />
-          <Route path="/historical/sxs"        element={<HistoricalSxS />} />
-          <Route path="/historical/single"     element={<HistoricalSingle />} />
-          <Route path="/historical/playground" element={<HistoricalPlayground />} />
-          <Route path="/historical/sweeps"     element={<HistoricalSweeps />} />
+          <Route path="/historical/sxs"     element={<HistoricalSxS />} />
+          <Route path="/historical/single"  element={<HistoricalSingle />} />
           <Route path="/settings"         element={<Settings />} />
           <Route path="*"                 element={<Navigate to="/" replace />} />
         </Routes>
@@ -39,40 +39,36 @@ export default function App() {
   );
 }
 
-// Title + top-level tabs + mode badge — all in one row.
+// Title + top-level tabs. Coord identity (host/url) lives entirely in
+// the right-side CoordSelector — it knows the active scope and renders
+// either a static badge (single coord) or a dropdown (multi-coord).
 function TopHeader() {
-  const reg = useRunnersRegistry();
   return (
     <header className="flex items-center gap-3 px-3 py-1 bg-panel border-b border-border">
       <h1 className="text-sm font-semibold text-accent">algo-engine</h1>
-      {reg && (
-        <span className="text-[11px] text-muted tnum">{reg.host}</span>
-      )}
       <nav className="flex gap-0.5 text-xs ml-3">
         <Tab1 to="/" match={['/', '/r/*']}>Runners</Tab1>
         <Tab1 to="/runs">Runs</Tab1>
+        <Tab1 to="/lab">Lab</Tab1>
         <Tab1 to="/historical">Historical</Tab1>
         <Tab1 to="/settings">Settings</Tab1>
       </nav>
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto">
         <CoordSelector />
-        {listCoords().length <= 1 && (
-          <span className="text-[11px] text-muted tnum">
-            {DATA_MODE === 'coord'
-              ? <>coord · <span className="text-text">{DATA_SOURCE_URL}</span></>
-              : <>mock</>}
-          </span>
-        )}
       </div>
     </header>
   );
 }
 
 // Row 2 — context-sensitive nav. Renders runner tabs in Runners mode,
-// or the Historical sub-mode tabs (SxS · Single · Playground) when the
-// path is /historical/*. Hidden everywhere else.
+// the Lab sub-tabs (Playground · Sweeps) under /lab/*, or the
+// Historical sub-tabs (SxS · Single) under /historical/*. Hidden
+// everywhere else.
 function NavRow2() {
   const location = useLocation();
+  if (location.pathname.startsWith('/lab/')) {
+    return <NavRow2Lab />;
+  }
   if (location.pathname.startsWith('/historical/')) {
     return <NavRow2Historical />;
   }
@@ -106,15 +102,31 @@ function NavRow2() {
   );
 }
 
-// Row-2 variant: Historical sub-modes. Three tabs styled like the
-// runner-instance Tab2 chips so the chrome reads identically.
+// Row-2 variant: Historical sub-modes (review of saved viz.json).
 function NavRow2Historical() {
   const location = useLocation();
   const tabs = [
-    { to: '/historical/sxs',        label: 'Side-by-side' },
-    { to: '/historical/single',     label: 'Single' },
-    { to: '/historical/playground', label: 'Playground' },
-    { to: '/historical/sweeps',     label: 'Sweeps' },
+    { to: '/historical/sxs',    label: 'Side-by-side' },
+    { to: '/historical/single', label: 'Single' },
+  ];
+  return (
+    <div className="flex items-center gap-1 px-3 py-0.5 bg-panel2 border-b border-border text-xs">
+      {tabs.map(t => (
+        <Tab2 key={t.to} to={t.to} active={location.pathname === t.to}>
+          {t.label}
+        </Tab2>
+      ))}
+    </div>
+  );
+}
+
+// Row-2 variant: Lab sub-modes (interactive engine workloads — explore
+// parameter space rather than review past runs).
+function NavRow2Lab() {
+  const location = useLocation();
+  const tabs = [
+    { to: '/lab/playground', label: 'Playground' },
+    { to: '/lab/sweeps',     label: 'Sweeps' },
   ];
   return (
     <div className="flex items-center gap-1 px-3 py-0.5 bg-panel2 border-b border-border text-xs">

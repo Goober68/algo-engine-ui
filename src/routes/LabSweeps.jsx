@@ -30,7 +30,7 @@ const CATEGORY_LABEL = {
   lifecycle: 'Lifecycle',
 };
 
-export default function HistoricalSweeps() {
+export default function LabSweeps() {
   const [schema, setSchema]   = useState(null);
   const [error, setError]     = useState(null);
   const [recipe, setRecipe]   = useState(null);
