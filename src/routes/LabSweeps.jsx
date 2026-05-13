@@ -40,6 +40,10 @@ export default function LabSweeps() {
   const [submitError, setSubmitError] = useState(null);
   const [lastSweepId, setLastSweepId] = useState(null);   // most-recent COMPLETED sweep
   const [drawerOpen, setDrawerOpen]   = useState(false);  // recipe JSON drawer visibility
+  const [formWidth, setFormWidth]     = useState(() => {
+    const v = parseInt(localStorage.getItem('lab.sweeps.formWidth') || '', 10);
+    return Number.isFinite(v) && v >= 320 ? v : 640;
+  });
   const esRef = useRef(null);
 
   useEffect(() => {
@@ -152,8 +156,9 @@ export default function LabSweeps() {
         drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen(v => !v)}
       />
       <div className="flex-1 min-h-0 flex">
-        {/* Recipe form (left) — width-capped so results panel gets the room */}
-        <div className="w-[640px] shrink-0 min-h-0 overflow-y-auto bg-panel border-r border-border">
+        {/* Recipe form (left) — width is user-draggable via Splitter */}
+        <div style={{ width: formWidth }}
+             className="shrink-0 min-h-0 overflow-y-auto bg-panel">
           {CATEGORY_ORDER.filter(c => grouped[c]?.length).map(cat => (
             <CategoryBlock
               key={cat}
@@ -165,6 +170,13 @@ export default function LabSweeps() {
             />
           ))}
         </div>
+        <Splitter
+          width={formWidth}
+          onChange={(w) => {
+            setFormWidth(w);
+            localStorage.setItem('lab.sweeps.formWidth', String(w));
+          }}
+        />
         {/* Right pane — fills remaining width. Job status while running,
             then results from the most-recent completed sweep. */}
         <div className="flex-1 min-h-0 flex flex-col">
@@ -173,8 +185,9 @@ export default function LabSweeps() {
             : <SweepResults sweepId={lastSweepId} job={job} />}
         </div>
       </div>
-      {/* Sticky bottom-right dimensionality. */}
-      <BottomDimBadge total={total} />
+      {/* Sticky bottom-right dimensionality. Pinned to the right edge
+          of the form column so it tracks the splitter. */}
+      <BottomDimBadge total={total} formWidth={formWidth} />
       {/* Recipe JSON drawer (toggle via toolbar button). */}
       {drawerOpen && (
         <RecipeDrawer
@@ -186,13 +199,14 @@ export default function LabSweeps() {
   );
 }
 
-// Sticky bottom-right bubble showing total config count. Sits inside
-// the form column so it doesn't overlap the results table.
-function BottomDimBadge({ total }) {
+// Sticky badge anchored to the form column's right edge so it doesn't
+// overlap the results pane.
+function BottomDimBadge({ total, formWidth }) {
   const tooBig = total > 10_000_000;
   const empty  = total < 1;
   return (
-    <div className="absolute bottom-2 left-[520px] pointer-events-none">
+    <div className="absolute bottom-2 pointer-events-none"
+         style={{ left: Math.max(120, (formWidth ?? 640) - 120) }}>
       <div className="bg-bg/85 backdrop-blur-sm border border-border rounded px-2 py-1 text-[11px] tnum shadow-lg">
         <span className="text-muted">total </span>
         <span className={
@@ -202,6 +216,43 @@ function BottomDimBadge({ total }) {
                               'text-text font-semibold'
         }>{fmtCount(total)}</span>
       </div>
+    </div>
+  );
+}
+
+// Draggable vertical splitter between recipe form and results pane.
+// Width persists to localStorage; mouse drag updates form width and
+// constrains it so neither pane drops below a usable size.
+function Splitter({ width, onChange }) {
+  const onMouseDown = (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    const onMove = (ev) => {
+      const next = startW + (ev.clientX - startX);
+      const max = window.innerWidth - 360;     // leave room for results pane
+      const w = Math.max(320, Math.min(max, next));
+      onChange(w);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      title="drag to resize"
+      className="w-1 shrink-0 bg-border hover:bg-accent/60 cursor-col-resize transition-colors relative group"
+    >
+      {/* Wider invisible hit area for easier grabbing */}
+      <div className="absolute -left-1 -right-1 top-0 bottom-0" />
     </div>
   );
 }
@@ -453,7 +504,16 @@ function SweepResults({ sweepId, job }) {
         <span className="text-[10px] uppercase tracking-wide text-muted">results</span>
         <code className="text-[10px] text-muted truncate" title={sweepId}>{sweepId}</code>
         <span className="ml-auto text-muted tnum">{rows.length} rows</span>
+        <button
+          type="button"
+          disabled
+          title="pareto.exe binary format (V5) is ACD-EA-specific 17×9 axes; XOVD V6 schema pending engine-claude"
+          className="ml-2 px-2 py-0.5 rounded border border-border text-[10px] text-muted/60 opacity-50 cursor-not-allowed"
+        >
+          View in pareto (pending)
+        </button>
       </div>
+      <SummaryStrip rows={rows} metric="pnl_dollars" />
       <div className="flex-1 min-h-0 overflow-auto">
         <table className="w-full text-[11px] tnum">
           <thead className="sticky top-0 bg-panel border-b border-border">
@@ -502,6 +562,121 @@ function fmtMetric(v) {
     return v.toFixed(2);
   }
   return String(v);
+}
+
+// ── Summary strip above the per-config table ────────────────────────
+// Glanceable answer to "did this sweep find a winner?" without having
+// to scan rows. Best/worst/median PnL + count-positive vs count-negative
+// + tiny SVG histogram of the distribution. Defaults to pnl_dollars
+// but accepts any numeric metric key.
+function SummaryStrip({ rows, metric }) {
+  const stats = useMemo(() => computeStats(rows, metric), [rows, metric]);
+  if (!stats) return null;
+  const { n, nPos, nNeg, nZero, best, worst, median, mean, bins, binMax } = stats;
+  return (
+    <div className="px-3 py-2 border-b border-border bg-bg/50 flex items-center gap-4 text-[11px]">
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wide text-muted">configs</span>
+        <span className="tnum text-text font-semibold">{n.toLocaleString()}</span>
+      </div>
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wide text-muted">pos / neg</span>
+        <span className="tnum">
+          <span className="text-long">{nPos}</span>
+          <span className="text-muted"> / </span>
+          <span className="text-short">{nNeg}</span>
+          {nZero > 0 && <span className="text-muted"> / {nZero}</span>}
+        </span>
+      </div>
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wide text-muted">best</span>
+        <span className="tnum text-long font-semibold">{fmtCurrency(best)}</span>
+      </div>
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wide text-muted">median</span>
+        <span className={'tnum font-semibold ' + (median >= 0 ? 'text-long/80' : 'text-short/80')}>
+          {fmtCurrency(median)}
+        </span>
+      </div>
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wide text-muted">mean</span>
+        <span className={'tnum ' + (mean >= 0 ? 'text-long/80' : 'text-short/80')}>
+          {fmtCurrency(mean)}
+        </span>
+      </div>
+      <div className="flex flex-col leading-tight">
+        <span className="text-[9px] uppercase tracking-wide text-muted">worst</span>
+        <span className="tnum text-short font-semibold">{fmtCurrency(worst)}</span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <PnlHistogram bins={bins} binMax={binMax} />
+      </div>
+    </div>
+  );
+}
+
+function computeStats(rows, metric) {
+  const vals = rows.map(r => r[metric]).filter(v => typeof v === 'number' && Number.isFinite(v));
+  if (vals.length === 0) return null;
+  const sorted = [...vals].sort((a, b) => a - b);
+  const sum = vals.reduce((a, b) => a + b, 0);
+  const mean = sum / vals.length;
+  const median = sorted.length % 2
+    ? sorted[(sorted.length - 1) >> 1]
+    : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  const nPos  = vals.filter(v => v > 0).length;
+  const nNeg  = vals.filter(v => v < 0).length;
+  const nZero = vals.filter(v => v === 0).length;
+
+  // Histogram: 24 bins spanning [worst, best]. Tracks signed bins so
+  // we can color positive vs negative without a second pass.
+  const N_BINS = 24;
+  const min = sorted[0], max = sorted[sorted.length - 1];
+  const span = max - min || 1;
+  const bins = new Array(N_BINS).fill(0);
+  for (const v of vals) {
+    const idx = Math.min(N_BINS - 1, Math.max(0, Math.floor(((v - min) / span) * N_BINS)));
+    bins[idx]++;
+  }
+  const binMax = Math.max(...bins, 1);
+  return { n: vals.length, nPos, nNeg, nZero, best: max, worst: min,
+           median, mean, bins, binMax };
+}
+
+function PnlHistogram({ bins, binMax }) {
+  // Inline SVG; 24 bars, fixed height 28px. Bars left-of-center are
+  // negative-PnL bins (red), right-of-center are positive (green). The
+  // exact pos/neg threshold is the bin containing zero — we approximate
+  // by splitting at the bin index closest to (0 - min) / span.
+  const W = 280, H = 28;
+  const barW = W / bins.length;
+  return (
+    <svg width={W} height={H} className="block">
+      {bins.map((v, i) => {
+        const h = (v / binMax) * H;
+        const x = i * barW;
+        const y = H - h;
+        // Color heuristic: bins skewing left (lower index) trend toward
+        // worst/negative, right toward best/positive.
+        const t = i / (bins.length - 1);
+        const fill = t < 0.45 ? 'fill-short/60' : t > 0.55 ? 'fill-long/60' : 'fill-muted/60';
+        return (
+          <rect key={i} x={x + 0.5} y={y} width={barW - 1} height={h}
+                className={fill} />
+        );
+      })}
+    </svg>
+  );
+}
+
+function fmtCurrency(v) {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const sign = v < 0 ? '-' : '';
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
+  if (abs >= 10_000)    return `${sign}$${(abs / 1000).toFixed(1)}K`;
+  if (abs >= 1000)      return `${sign}$${(abs / 1000).toFixed(2)}K`;
+  return `${sign}$${abs.toFixed(0)}`;
 }
 
 // ── Recipe drawer (toggleable bottom panel) ─────────────────────────
