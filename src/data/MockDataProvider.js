@@ -16,14 +16,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { subscribe, SSE_ENABLED } from './eventBus';
-import { activeCoord, listCoords, subscribeCoordChange } from './coords';
+import { activeCoordFor, listCoords } from './coords';
 
-// Active coord URL — read fresh on each request via coordUrl(), not
-// captured at module load. Lets the UI's CoordSelector hot-swap which
-// coord serves runner data without a page reload.
+// Runner-data lives on the 'runners' coord scope (typically VPS).
+// Read fresh on each request — no module-load capture — so the
+// CoordSelector can hot-swap which coord serves runner data without
+// a page reload. Other scopes (playground, sweep, historical) read
+// from their own scopes via their own data modules.
 const FIXTURE_RUN = 'live_2026_05_10';
 const REAL = listCoords().length > 0;
-const coordUrl = () => activeCoord()?.url || '';
+const coordUrl = () => activeCoordFor('runners')?.url || '';
 
 const cache = new Map();
 

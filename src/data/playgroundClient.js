@@ -13,7 +13,7 @@
 // preset that matches the dev box's checkout layout.
 
 import { useEffect, useState } from 'react';
-import { activeCoord, subscribeCoordChange } from './coords';
+import { activeCoordFor, subscribeCoordChangeFor } from './coords';
 
 const DEFAULTS = parseDefaults(import.meta.env.VITE_PLAYGROUND_DEFAULTS);
 
@@ -29,7 +29,7 @@ function parseDefaults(raw) {
   return out;
 }
 
-const coordBase = () => activeCoord()?.url || '';
+const coordBase = () => activeCoordFor('playground')?.url || '';
 
 let session = null;          // {session_id, ...meta} or null
 let status = 'disconnected'; // 'connecting' | 'ready' | 'error' | 'disconnected'
@@ -123,9 +123,9 @@ export function useWsStatus() {
   return s;
 }
 
-// Stop session if user switches active coord (would otherwise be
-// hitting the wrong coord on subsequent runs).
-subscribeCoordChange(() => {
+// Stop session if user switches the playground coord (would otherwise
+// be hitting the wrong coord on subsequent runs).
+subscribeCoordChangeFor('playground', () => {
   if (session) stop();
 });
 

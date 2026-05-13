@@ -4,14 +4,17 @@
 // Caches per-strategy in module scope; the cache is keyed by coord
 // URL so a CoordSelector switch refetches automatically.
 
-import { activeCoord, allCoords } from './coords';
+import { activeCoordFor, allCoords } from './coords';
+
+const SCHEMA_SCOPE = 'playground';   // schemas served by whichever coord hosts the engine binary; share with playground scope
 
 const cache = new Map();   // key = `${coordUrl}|${strategy}` → schema
 
 export async function fetchStrategySchema(strategy) {
+  const active = activeCoordFor(SCHEMA_SCOPE);
   const order = [
-    activeCoord(),
-    ...allCoords().filter(c => c?.name !== activeCoord()?.name),
+    active,
+    ...allCoords().filter(c => c?.name !== active?.name),
   ].filter(Boolean);
 
   let lastErr = null;
