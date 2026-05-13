@@ -9,6 +9,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchStrategySchema } from '../data/strategySchema';
 import { getDefaults, getHello, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
+import SchemaSection from '../components/schema/SchemaSection';
+import ParamRow from '../components/schema/ParamRow';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
@@ -173,85 +175,83 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
   );
 }
 
-// ── Slider sidebar — schema-driven ──────────────────────────────────
+// ── Slider sidebar — schema-driven, grouped by schema.sections ──────
+// Renders one SchemaSection per section that contains at least one
+// field present in `fields` (the playground_fields whitelist). Inside
+// each section, rows are kept in the schema's row/col order so the
+// layout matches what the future config editor / sweep UI will show.
 function SliderPanel({ schema, fields, values, onChange }) {
+  const sections = useMemo(
+    () => groupFieldsBySection(schema, fields),
+    [schema, fields]
+  );
+  // Index lookup so onChange can map field-name → its slot in `values`.
+  const idxOf = useMemo(() => {
+    const m = new Map();
+    fields.forEach((k, i) => m.set(k, i));
+    return m;
+  }, [fields]);
+
   return (
-    <div className="w-[320px] min-h-0 overflow-y-auto border-r border-border bg-panel">
-      <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-muted border-b border-border">
-        Parameters
-      </div>
-      {fields.map((key, i) => (
-        <SliderRow key={key} def={schema.params[key]} fieldKey={key} value={values[i]}
-                   onChange={(v) => onChange(i, v)} />
+    <div className="w-[300px] min-h-0 overflow-y-auto border-r border-border bg-panel">
+      {sections.map(s => (
+        <SchemaSection
+          key={s.id}
+          id={`playground.${s.id}`}
+          title={s.title}
+          badge={`${s.fields.length}`}
+          defaultOpen={true}
+        >
+          {s.fields.map(key => (
+            <ParamRow
+              key={key}
+              schemaField={{ ...schema.params[key], name: key }}
+              value={values[idxOf.get(key)]}
+              onChange={(v) => onChange(idxOf.get(key), v)}
+            />
+          ))}
+        </SchemaSection>
       ))}
     </div>
   );
 }
 
-function SliderRow({ def, fieldKey, value, onChange }) {
-  if (!def) return null;
-  const isInt   = def.type === 'int';
-  const isFloat = def.type === 'float';
-  // sweep_range is [start, step, stop]; use as slider min/step/max.
-  const [min, step, max] = def.sweep_range || [
-    isInt ? 0 : 0.0,
-    isInt ? 1 : 0.01,
-    isInt ? 100 : 1.0,
-  ];
-  // Risk-dollars is text in playground.html — same heuristic here:
-  // text input for free-form numeric where dragging isn't meaningful.
-  const useTextBox = fieldKey === 'riskDollars';
-  // Use the field's `label` (from playground_fields[].label if added
-  // later) or fall back to a key-as-label.
-  const label = def.label || keyToLabel(fieldKey);
-  const formatted = isInt ? value : Number(value).toFixed(stepPrecision(step));
-  return (
-    <div className="px-3 py-2 border-b border-border/40">
-      <div className="flex items-baseline justify-between mb-1">
-        <span className="text-[11px] text-muted truncate" title={def.tooltip || ''}>
-          {label}
-        </span>
-        <span className="text-[12px] font-bold text-accent tnum">{formatted}</span>
-      </div>
-      {useTextBox ? (
-        <input
-          type="number"
-          value={value}
-          min={min}
-          max={max}
-          step={step}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full px-2 py-1 bg-bg border border-border rounded text-text text-[12px] tnum"
-        />
-      ) : (
-        <>
-          <input
-            type="range"
-            min={min}
-            max={max}
-            step={step}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-full"
-          />
-          <div className="flex justify-between text-[9px] text-muted/60 tnum">
-            <span>{min}</span>
-            <span>{max}</span>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function keyToLabel(k) {
-  // tpAtrMult → "TP Atr Mult", tsTriggerTicks → "TS Trigger Ticks"
-  return k.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase()).trim();
-}
-function stepPrecision(step) {
-  const s = String(step);
-  const i = s.indexOf('.');
-  return i < 0 ? 0 : (s.length - i - 1);
+// Bucket each `fields` entry into the section it appears in (per
+// schema.sections[].rows[].cols[]). Fields not found in any section
+// fall into a synthetic "Other" group at the end. Sections are
+// returned in schema.sections order; sweep_weight isn't used in the
+// playground, but the sweep UI will sort by it.
+function groupFieldsBySection(schema, fields) {
+  const fieldSet = new Set(fields);
+  const sectionOf = new Map();      // field key → section id
+  const sectionTitle = new Map();   // section id → title
+  for (const sec of (schema?.sections || [])) {
+    sectionTitle.set(sec.id, sec.title);
+    for (const row of (sec.rows || [])) {
+      for (const col of (row.cols || [])) {
+        if (col.key) sectionOf.set(col.key, sec.id);
+      }
+    }
+  }
+  // Preserve playground_fields order within each section.
+  const buckets = new Map();
+  for (const key of fields) {
+    const sid = sectionOf.get(key) || '_other';
+    if (!buckets.has(sid)) buckets.set(sid, []);
+    buckets.get(sid).push(key);
+  }
+  // Emit in schema-section order (so the visual order matches what
+  // engine-claude defined in the JSON), with "_other" last.
+  const out = [];
+  for (const sec of (schema?.sections || [])) {
+    if (buckets.has(sec.id)) {
+      out.push({ id: sec.id, title: sec.title, fields: buckets.get(sec.id) });
+    }
+  }
+  if (buckets.has('_other')) {
+    out.push({ id: '_other', title: 'Other', fields: buckets.get('_other') });
+  }
+  return out;
 }
 
 // ── Stats strip ─────────────────────────────────────────────────────
