@@ -37,6 +37,11 @@ function saveView(runnerId, view) {
   try { window.localStorage.setItem(persistKey(runnerId), JSON.stringify(view)); } catch {}
 }
 
+// Delay before the gate-hover tooltip appears on a dim bar. Avoids
+// flashing while the user just mouses around. Once visible, the
+// tooltip tracks the cursor without re-debounce.
+const GATE_HOVER_DELAY_MS = 500;
+
 const TF_OPTIONS = [
   { sec: 180, label: 'M3' },
   { sec: 900, label: 'M15' },
@@ -52,6 +57,19 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
   const seriesRef = useRef({});
   const lastBarRef = useRef(null);   // last bar ref-eq pushed to chart
   const restoredRef = useRef(false);  // have we restored saved view yet?
+  // Floating tooltip shown while the user hovers a candle whose decision
+  // was blocked. Mirrors StrategyStatePanel's GateRow list, but
+  // bar-specific.
+  const [gateHover, setGateHover] = useState(null);  // { x, y, decision } or null
+  // Mirror of gateHover for synchronous reads inside the crosshair
+  // handler (which is set up once at mount).
+  const gateHoverRef = useRef(null);
+  // Debounce state for hover-intent: { timer, barTime, pos, decision }.
+  const hoverPendingRef = useRef({ timer: null, barTime: null });
+  // Re-renders dependent effects after chartRef is populated. Refs
+  // don't trigger re-renders, so without this the hover-handler
+  // effect would see chartRef.current === null on first run and miss.
+  const [chartReady, setChartReady] = useState(false);
 
   // Build chart once.
   useEffect(() => {
@@ -101,30 +119,29 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
     const fastMa = chart.addSeries(LineSeries, { color: '#E040FB', lineWidth: 3, priceLineVisible: false, lastValueVisible: false });
     const slowMa = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 3, priceLineVisible: false, lastValueVisible: false });
 
-    // Click-on-candle -> find nearest broker trade. First exact bar match,
-    // then nearest-in-time within a couple of bar widths so the user
-    // doesn't have to land exactly on the entry candle.
+    // Click-on-candle -> open the trade whose entry-bar is the bar
+    // clicked. Exact-bar match only — no nearest-in-time fallback.
     chart.subscribeClick((param) => {
       if (!param?.time) return;
       const broker = currentBrokerRef.current;
       if (!broker?.length) return;
       const tfNow = currentTfRef.current;
       const clickSec = Number(param.time);
-      let best = null, bestDist = Infinity;
       for (const t of broker) {
-        const e = Math.floor(t.entry_ts / 1e9);
-        const d = Math.abs(e - clickSec);
-        if (d < bestDist) { bestDist = d; best = t; }
-      }
-      // Tolerance = 4 bars either side. Beyond that the click was
-      // probably about something else.
-      if (best && bestDist <= tfNow * 4) {
-        setSelectedTradeKeyRef.current(best.entry_ts);
+        const entryBar = Math.floor(t.entry_ts / 1e9 / tfNow) * tfNow;
+        if (entryBar === clickSec) {
+          setSelectedTradeKeyRef.current(t.entry_ts);
+          return;
+        }
       }
     });
 
     chartRef.current = chart;
     seriesRef.current = { candles, fastMa, slowMa };
+    // Signal to dependent effects (e.g. crosshair hover handler) that
+    // the chart instance is now usable. setChartReady triggers a
+    // re-render so they get a chance to bind.
+    setChartReady(true);
 
     // Save logical-range to localStorage on every user pan/zoom (debounced).
     // Logical range survives bar-append better than time range — when a new
@@ -141,6 +158,10 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
 
     return () => {
       if (saveTimer) clearTimeout(saveTimer);
+      if (hoverPendingRef.current.timer) {
+        clearTimeout(hoverPendingRef.current.timer);
+        hoverPendingRef.current.timer = null;
+      }
       chart.remove();
       chartRef.current = null;
       lastBarRef.current = null;
@@ -152,14 +173,93 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
   const currentRunnerIdRef = useRef(runnerId);
   useEffect(() => { currentRunnerIdRef.current = runnerId; }, [runnerId]);
 
-  // Refs for click handler so we don't recreate the chart when broker
-  // / tf / setSelectedTradeKey change.
+  // Refs for click/hover handlers so we don't recreate the chart when
+  // broker / decisions / tf / setSelectedTradeKey change.
   const currentBrokerRef = useRef(data?.broker || []);
+  const currentDecisionsRef = useRef(data?.decisions || []);
   const currentTfRef = useRef(tf);
   const setSelectedTradeKeyRef = useRef(setSelectedTradeKey);
   useEffect(() => { currentBrokerRef.current = data?.broker || []; }, [data?.broker]);
+  useEffect(() => { currentDecisionsRef.current = data?.decisions || []; }, [data?.decisions]);
   useEffect(() => { currentTfRef.current = tf; }, [tf]);
   useEffect(() => { setSelectedTradeKeyRef.current = setSelectedTradeKey; }, [setSelectedTradeKey]);
+
+  // Hover-on-candle -> show the gate-priority breakdown for the
+  // decision that applies to that bar. A decision's ts_ns is the
+  // close of its source bar (= open of the bar it APPLIES to), so
+  // the bar visually showing the dim/missing limit segment maps to
+  // `floor(d.ts_ns/1e9) === param.time`.
+  //
+  // Visibility rule (matches the limit-line rendering): tooltip shows
+  // ONLY when the bar would render a DIM limit segment — i.e.
+  // classifyDecision returns a '*_dim' class. Bars with a hidden
+  // segment have no tooltip; bright bars have no block to show.
+  //
+  // Hover-intent: once the cursor settles on a dim bar, wait
+  // GATE_HOVER_DELAY_MS before showing — avoids flashing while the
+  // user is panning. Once visible, position tracks the cursor.
+  //
+  // Registered in its own effect (not in the chart-mount effect) so
+  // HMR-swapping this file cleanly replaces the closure: cleanup
+  // unsubscribes the previous handler before the new one binds.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = (param) => {
+      let cand = null;
+      if (param?.time && param?.point) {
+        const decs = currentDecisionsRef.current;
+        if (decs?.length) {
+          const tSec = Number(param.time);
+          const found = decs.find(d => Math.floor(d.ts_ns / 1e9) === tSec);
+          if (found) {
+            const inTrade = (found.open_qty || 0) !== 0;
+            const cls = inTrade ? null : classifyDecision(found);
+            if (cls && cls.endsWith('_dim')) {
+              cand = { x: param.point.x, y: param.point.y, decision: found, tSec };
+            }
+          }
+        }
+      }
+      const pend = hoverPendingRef.current;
+      if (!cand) {
+        if (pend.timer) { clearTimeout(pend.timer); pend.timer = null; }
+        pend.barTime = null;
+        if (gateHoverRef.current) { gateHoverRef.current = null; setGateHover(null); }
+        return;
+      }
+      if (gateHoverRef.current
+          && Math.floor(gateHoverRef.current.decision.ts_ns / 1e9) === cand.tSec) {
+        const next = { x: cand.x, y: cand.y, decision: cand.decision };
+        gateHoverRef.current = next;
+        setGateHover(next);
+        return;
+      }
+      if (pend.barTime === cand.tSec) {
+        pend.pos = { x: cand.x, y: cand.y };
+        pend.decision = cand.decision;
+        return;
+      }
+      if (pend.timer) clearTimeout(pend.timer);
+      pend.barTime = cand.tSec;
+      pend.pos = { x: cand.x, y: cand.y };
+      pend.decision = cand.decision;
+      pend.timer = setTimeout(() => {
+        const next = { x: pend.pos.x, y: pend.pos.y, decision: pend.decision };
+        gateHoverRef.current = next;
+        setGateHover(next);
+        pend.timer = null;
+        pend.barTime = null;
+      }, GATE_HOVER_DELAY_MS);
+    };
+    chart.subscribeCrosshairMove(handler);
+    return () => {
+      chart.unsubscribeCrosshairMove(handler);
+      const pend = hoverPendingRef.current;
+      if (pend.timer) { clearTimeout(pend.timer); pend.timer = null; }
+      pend.barTime = null;
+    };
+  }, [chartReady]);
 
   // Aggregated bars memo — recompute only when bars array or tf change.
   const aggregated = useMemo(
@@ -342,6 +442,7 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
           the overlay can render BELOW the candle layer. (Same trick as
           strategy-visualizer/index.html #overlay.) */}
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }} />
+      {gateHover && <GateHoverTip {...gateHover} wrapRef={wrapRef} />}
       {/* Bottom-center "→ live" reset, sits just above the time-scale
           gutter — same spot TradingView's own scroll-to-realtime lives. */}
       <button
@@ -354,6 +455,99 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
           <polyline points="3 4 3 10 9 10" />
         </svg>
       </button>
+    </div>
+  );
+}
+
+// Gate-priority hover tooltip — replicates StrategyStatePanel's
+// LastDecision layout for the bar the user is hovering, with a
+// drill-down sub-list when the block is at the algo layer (so the
+// user sees WHICH of the six XovdGate values fired).
+// Positioned next to the crosshair point, edge-clamped to wrap.
+const GATE_HOVER_LAYERS = ['infrastructure', 'session', 'algo', 'trading'];
+
+// XovdGate enum (algobot/strategy/xovdV1.h). Index = enum value,
+// order = priority. Edit here when the runner-side enum changes.
+const XOVD_GATE_NAMES = [
+  'None',              // 0 — not used as a fail value
+  'StateNotEligible',  // 1
+  'Cooldown',          // 2
+  'BarsAfterCross',    // 3
+  'BarsOnSide',        // 4
+  'Proximity',         // 5
+  'Geometry',          // 6
+];
+
+function GateHoverTip({ x, y, decision, wrapRef }) {
+  const wrap = wrapRef.current;
+  const wrapW = wrap?.clientWidth  || 0;
+  const wrapH = wrap?.clientHeight || 0;
+  const isAlgoBlocked = decision.blocked_layer === 'algo';
+  const W = 240;
+  // Tooltip grows when we drill into the algo sub-list (6 extra rows).
+  const H = isAlgoBlocked ? 240 : 130;
+  // Default: above-right of cursor. Flip if it would overflow.
+  let left = x + 14;
+  let top  = y - H - 14;
+  if (left + W > wrapW) left = x - W - 14;
+  if (top < 0)          top  = y + 14;
+  if (top + H > wrapH)  top  = Math.max(0, wrapH - H - 2);
+  const blockedIdx = GATE_HOVER_LAYERS.indexOf(decision.blocked_layer);
+  const failGate = decision[`${decision.blocked_layer}_gate`];
+  // Display value for the failing gate header: if algo, decode to name.
+  const failDisplay = isAlgoBlocked
+    ? (XOVD_GATE_NAMES[failGate] ?? failGate)
+    : (failGate ?? '');
+  return (
+    <div
+      className="absolute z-30 pointer-events-none rounded border border-border bg-panel/95 shadow-lg text-xs tnum"
+      style={{ left, top, width: W }}
+    >
+      <div className="px-2 py-1 border-b border-border bg-bg/40 flex items-baseline justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-muted">gates</span>
+        <span className="text-text text-[10px]">bar #{decision.bar_idx}</span>
+      </div>
+      <div className="px-2 py-1 space-y-0">
+        {GATE_HOVER_LAYERS.map((layer, i) => {
+          const passed = i < blockedIdx;
+          const isFailing = i === blockedIdx;
+          const skipped = i > blockedIdx;
+          let icon, cls, detail = '';
+          if (skipped)        { icon = '·'; cls = 'text-muted/40'; }
+          else if (isFailing) { icon = '⊘'; cls = 'text-short';    detail = failDisplay; }
+          else if (passed)    { icon = '✓'; cls = 'text-long';     }
+          else                { icon = '·'; cls = 'text-muted';    }
+          return (
+            <div key={layer} className="flex items-baseline gap-2 leading-tight">
+              <span className={`${cls} w-3 text-center`}>{icon}</span>
+              <span className={`${cls} w-24`}>{layer}</span>
+              <span className="text-muted truncate text-[11px]">{detail}</span>
+            </div>
+          );
+        })}
+        {isAlgoBlocked && (
+          <div className="mt-1 pt-1 border-t border-border/60">
+            <div className="text-[10px] uppercase tracking-wide text-muted mb-0.5">algo gates</div>
+            {XOVD_GATE_NAMES.slice(1).map((name, idx) => {
+              const enumVal = idx + 1;
+              const passed = enumVal < failGate;
+              const isFailing = enumVal === failGate;
+              const skipped = enumVal > failGate;
+              let icon, cls;
+              if (skipped)        { icon = '·'; cls = 'text-muted/40'; }
+              else if (isFailing) { icon = '⊘'; cls = 'text-short';    }
+              else if (passed)    { icon = '✓'; cls = 'text-long';     }
+              else                { icon = '·'; cls = 'text-muted';    }
+              return (
+                <div key={name} className="flex items-baseline gap-2 leading-tight pl-2">
+                  <span className={`${cls} w-3 text-center`}>{icon}</span>
+                  <span className={`${cls}`}>{name}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -461,13 +655,39 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
     outOfRange = broker.length - inRange.length;
   }
 
-  // Trade markers from BROKER (real fills), not the sparse sim deriv.
+  // Sub-bar X-coord for an event whose timestamp falls inside some
+  // bar X. v5 timeToCoordinate only returns coords for bar-aligned
+  // times, so look up bar X's and bar X+1's centers and interpolate
+  // linearly across bar X's column based on the fractional offset of
+  // the event within the bar:
+  //   alpha = 0   -> left edge of bar X's column
+  //   alpha = 0.5 -> bar X's center
+  //   alpha = 1   -> right edge of bar X's column (= boundary into X+1)
+  // Falls back to bar X's center if the right neighbour isn't in the
+  // visible range yet (last bar of the loaded set).
+  const subBarX = (tsNs) => {
+    const tSec = tsNs / 1e9;
+    const tBar = snap(tSec);
+    const xL = ts.timeToCoordinate(tBar);
+    if (xL == null) return null;
+    const xR = ts.timeToCoordinate(tBar + tf);
+    if (xR == null) return xL;
+    const alpha = (tSec - tBar) / tf;
+    return xL + (alpha - 0.5) * (xR - xL);
+  };
+
+  // Trade markers are sim-generated fills (OptimisticLimitFillModel
+  // synthesizing entries/exits from the algo's intents against the
+  // tick replay). The `data.broker` name is misleading — it's the
+  // SIM's "broker", not Tradovate's. `entry_ts` / `exit_ts` carry the
+  // sub-bar timestamp at which the simulator booked the fill, so
+  // position them sub-bar via subBarX().
   let drawn = 0;
   for (const t of inRange) {
     const isLong = t.side === 'long';
     const entryColor = isLong ? '#1976d2' : '#ffff00';
     const exitColor  = t.pnl > 0 ? '#7fff00' : '#ef5350';
-    const xIn  = ts.timeToCoordinate(snap(Math.floor(t.entry_ts / 1e9)));
+    const xIn  = subBarX(t.entry_ts);
     const yIn  = candles.priceToCoordinate(t.entry_px);
     const isSel = selectedTradeKey === t.entry_ts;
     if (xIn != null && yIn != null) {
@@ -475,7 +695,7 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
       drawn++;
     }
     if (t.exit_ts && t.exit_px != null) {
-      const xOut = ts.timeToCoordinate(snap(Math.floor(t.exit_ts / 1e9)));
+      const xOut = subBarX(t.exit_ts);
       const yOut = candles.priceToCoordinate(t.exit_px);
       if (xOut != null && yOut != null) {
         drawArrow(ctx, xOut, yOut, exitColor, 'left', isSel);
@@ -500,10 +720,10 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
 //            actionable territory.
 // Point-to-point (no smoothing) so each bar's value is legible.
 const LIMIT_COLORS = {
-  long_bright:  '#06b6d4',                       // cyan
-  long_dim:     'rgba(6,182,212,0.45)',
-  short_bright: '#facc15',                       // yellow
-  short_dim:    'rgba(250,204,21,0.45)',
+  long_bright:  '#05FEFF',                       // bright cyan
+  long_dim:     'rgba(5,254,255,0.45)',
+  short_bright: '#ffff00',                       // bright yellow
+  short_dim:    'rgba(255,255,0,0.45)',
 };
 
 // XovdGate::Proximity (5) per algobot/strategy/xovdV1.h. Used to
@@ -519,6 +739,17 @@ function classifyDecision(d) {
   if (d.blocked_layer === 'session') return null;
   if (d.blocked_layer === 'algo' && d.algo_gate === ALGO_GATE_PROXIMITY) return null;
   const isLong = d.xovd?.state === 'crossed_up';
+  // Hide when the bar's close is on the wrong side of the fast EMA
+  // for the limit's direction — the setup is obviously not active:
+  //   long  expects close >= fast_ma (crossed up, pull-back to anchor)
+  //   short expects close <= fast_ma (crossed down, push-up to anchor)
+  // Falsy-data guard: only hide when both are present.
+  const close = d.xovd?.close;
+  const fMa   = d.xovd?.fast_ma;
+  if (close != null && fMa != null) {
+    if (isLong  && close < fMa) return null;
+    if (!isLong && close > fMa) return null;
+  }
   const blocked = d.blocked_layer && d.blocked_layer !== 'none';
   if (isLong) return blocked ? 'long_dim' : 'long_bright';
   return blocked ? 'short_dim' : 'short_bright';
@@ -527,30 +758,37 @@ function classifyDecision(d) {
 function drawLimitLine(ctx, chart, candles, data, tf, snap) {
   if (!data?.decisions?.length) return;
   const ts = chart.timeScale();
-  ctx.lineWidth = 1.5;
-  // Walk decisions in order. Two break conditions reset `prev` so we
-  // don't bridge a segment across them:
-  //   1. The bar didn't compute a limit (cls == null), OR
-  //   2. We're in a position (open_qty != 0) — the strategy isn't
-  //      shopping a new limit, so the line shouldn't span the trade.
-  let prev = null;
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'butt';
+  // Each decision draws an INDEPENDENT horizontal segment at its
+  // `entry_limit` price, spanning the column of bar X+1 (the bar the
+  // limit applies to). No connecting diagonals between bars — the
+  // limit can move arbitrarily bar-to-bar and a diagonal misleads.
+  // Segment span: from the gap before bar X+1 (midpoint of bar X / X+1
+  // centers) to the gap after bar X+1 (midpoint of bar X+1 / X+2
+  // centers). v5 timeToCoordinate is bar-aligned-only, so we look up
+  // three neighbouring bar centers and average pairwise to get the
+  // two gap positions.
   for (const d of data.decisions) {
     const inTrade = (d.open_qty || 0) !== 0;
     const cls = inTrade ? null : classifyDecision(d);
-    if (cls == null) { prev = null; continue; }
+    if (cls == null) continue;
     const t = Math.floor(d.ts_ns / 1e9);
-    const x = ts.timeToCoordinate(snap(t));
-    if (x == null) { prev = null; continue; }
+    const xPrev = ts.timeToCoordinate(snap(t) - tf);  // bar X center
+    const xMid  = ts.timeToCoordinate(snap(t));        // bar X+1 center
+    const xNext = ts.timeToCoordinate(snap(t) + tf);   // bar X+2 center
+    if (xMid == null) continue;
+    // Fall back to xMid when an edge neighbour isn't loaded yet so
+    // the leftmost / rightmost bar still renders a (half-width) segment.
+    const xLeft  = (xPrev == null) ? xMid : (xPrev + xMid) / 2;
+    const xRight = (xNext == null) ? xMid : (xMid + xNext) / 2;
     const y = candles.priceToCoordinate(d.entry_limit);
-    if (y == null) { prev = null; continue; }
-    if (prev) {
-      ctx.strokeStyle = LIMIT_COLORS[cls] || LIMIT_COLORS.none;
-      ctx.beginPath();
-      ctx.moveTo(prev.x, prev.y);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-    }
-    prev = { x, y };
+    if (y == null) continue;
+    ctx.strokeStyle = LIMIT_COLORS[cls] || LIMIT_COLORS.none;
+    ctx.beginPath();
+    ctx.moveTo(xLeft,  y);
+    ctx.lineTo(xRight, y);
+    ctx.stroke();
   }
 }
 
@@ -561,10 +799,10 @@ function drawLimitLine(ctx, chart, candles, data, tf, snap) {
 // reduced opacity so it reads as the "alternative / what-if" overlay.
 // Same gating logic as the primary (bright/dim/hidden by gate).
 const LIMIT_COLORS_SLOW = {
-  long_bright:  'rgba(6,182,212,0.75)',
-  long_dim:     'rgba(6,182,212,0.30)',
-  short_bright: 'rgba(250,204,21,0.75)',
-  short_dim:    'rgba(250,204,21,0.30)',
+  long_bright:  'rgba(5,254,255,0.75)',
+  long_dim:     'rgba(5,254,255,0.30)',
+  short_bright: 'rgba(255,255,0,0.75)',
+  short_dim:    'rgba(255,255,0,0.30)',
 };
 
 function classifyDecisionSlow(d) {
@@ -575,6 +813,13 @@ function classifyDecisionSlow(d) {
   if (d.blocked_layer === 'session') return null;
   if (d.blocked_layer === 'algo' && d.algo_gate === ALGO_GATE_PROXIMITY) return null;
   const isLong = d.xovd?.state === 'crossed_up';
+  // Same wrong-side-of-fast-EMA hide as the primary — see classifyDecision.
+  const close = d.xovd?.close;
+  const fMa   = d.xovd?.fast_ma;
+  if (close != null && fMa != null) {
+    if (isLong  && close < fMa) return null;
+    if (!isLong && close > fMa) return null;
+  }
   const blocked = d.blocked_layer && d.blocked_layer !== 'none';
   if (isLong) return blocked ? 'long_dim' : 'long_bright';
   return blocked ? 'short_dim' : 'short_bright';
@@ -584,26 +829,29 @@ function drawLimitLineSlow(ctx, chart, candles, data, tf, snap) {
   if (!data?.decisions?.length) return;
   const ts = chart.timeScale();
   ctx.save();
-  ctx.lineWidth = 1.25;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'butt';
   ctx.setLineDash([5, 4]);
-  let prev = null;
+  // Per-bar horizontal segments, same layout as the primary — see
+  // drawLimitLine. Stays dashed/dim so it reads as the "what-if".
   for (const d of data.decisions) {
     const inTrade = (d.open_qty || 0) !== 0;
     const cls = inTrade ? null : classifyDecisionSlow(d);
-    if (cls == null) { prev = null; continue; }
+    if (cls == null) continue;
     const t = Math.floor(d.ts_ns / 1e9);
-    const x = ts.timeToCoordinate(snap(t));
-    if (x == null) { prev = null; continue; }
+    const xPrev = ts.timeToCoordinate(snap(t) - tf);
+    const xMid  = ts.timeToCoordinate(snap(t));
+    const xNext = ts.timeToCoordinate(snap(t) + tf);
+    if (xMid == null) continue;
+    const xLeft  = (xPrev == null) ? xMid : (xPrev + xMid) / 2;
+    const xRight = (xNext == null) ? xMid : (xMid + xNext) / 2;
     const y = candles.priceToCoordinate(d.xovd.entry_limit_slow);
-    if (y == null) { prev = null; continue; }
-    if (prev) {
-      ctx.strokeStyle = LIMIT_COLORS_SLOW[cls];
-      ctx.beginPath();
-      ctx.moveTo(prev.x, prev.y);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-    }
-    prev = { x, y };
+    if (y == null) continue;
+    ctx.strokeStyle = LIMIT_COLORS_SLOW[cls];
+    ctx.beginPath();
+    ctx.moveTo(xLeft,  y);
+    ctx.lineTo(xRight, y);
+    ctx.stroke();
   }
   ctx.restore();
 }
@@ -623,8 +871,14 @@ function drawBlockMarkers(ctx, chart, candles, data, tf, snap) {
     const px = (d.entry_limit && d.entry_limit > 0) ? d.entry_limit : d.xovd?.close;
     if (px == null) continue;
     const t = Math.floor(d.ts_ns / 1e9);
-    const x = chart.timeScale().timeToCoordinate(snap(t));
-    if (x == null) continue;
+    // Same boundary positioning as the limit lines — the block is a
+    // decision taken at bar X close, applying to bar X+1; sit in the
+    // gap between them by averaging the two neighbouring bar centers.
+    const tsScale = chart.timeScale();
+    const xR = tsScale.timeToCoordinate(snap(t));
+    const xL = tsScale.timeToCoordinate(snap(t) - tf);
+    if (xR == null || xL == null) continue;
+    const x = (xL + xR) / 2;
     const y = candles.priceToCoordinate(px);
     if (y == null) continue;
     ctx.fillStyle = color;
