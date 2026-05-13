@@ -124,8 +124,10 @@ export default function LabPlayground() {
         />
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           <StatsStrip stats={stats} />
-          <EquityCurve trades={trades} />
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="flex-1 min-h-0">
+            <EquityCurve trades={trades} />
+          </div>
+          <div className="min-h-0 overflow-y-auto border-t border-border" style={{ flex: '0 0 30%' }}>
             <TradesTable trades={trades} />
           </div>
         </div>
@@ -321,14 +323,16 @@ function EquityCurve({ trades }) {
 
   if (!series) {
     return (
-      <div className="bg-panel border-b border-border px-3 py-2 text-[10px] text-muted/70 italic">
+      <div className="bg-panel border-b border-border px-3 py-2 text-[10px] text-muted/70 italic h-full">
         Equity curve — run a sweep / drag a slider to populate.
       </div>
     );
   }
 
-  // Inline SVG. Width auto-fits container; height fixed.
-  const W = 800, H = 90, PAD = 4;
+  // Inline SVG fills the flex-1 container so the curve grows when the
+  // panel below (trades) shrinks. preserveAspectRatio=none lets the
+  // viewBox stretch vertically — fine for a sparkline.
+  const W = 800, H = 200, PAD = 4;
   const { pts, lo, hi, final, peak, maxDD } = series;
   const span = (hi - lo) || 1;
   const xOf = (i) => PAD + (i / Math.max(1, pts.length - 1)) * (W - 2 * PAD);
@@ -338,8 +342,8 @@ function EquityCurve({ trades }) {
   const stroke = final >= 0 ? '#26a69a' : '#ef5350';   // long / short
 
   return (
-    <div className="bg-panel border-b border-border px-3 py-1">
-      <div className="flex items-baseline gap-4 text-[10px]">
+    <div className="bg-panel px-3 py-1 h-full flex flex-col min-h-0">
+      <div className="flex items-baseline gap-4 text-[10px] shrink-0">
         <span className="text-muted uppercase tracking-wide">equity</span>
         <span className={'tnum font-semibold ' + (final >= 0 ? 'text-long' : 'text-short')}>
           {fmtUSD(final)}
@@ -347,7 +351,8 @@ function EquityCurve({ trades }) {
         <span className="text-muted tnum">peak <span className="text-text">{fmtUSD(peak)}</span></span>
         <span className="text-muted tnum">max DD <span className="text-short">{fmtUSD(-maxDD)}</span></span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block w-full" style={{ height: H }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+           className="block w-full flex-1 min-h-0">
         <line x1={PAD} y1={zeroY} x2={W - PAD} y2={zeroY}
               stroke="#2a2e36" strokeWidth="1" strokeDasharray="2 3" />
         <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
