@@ -112,6 +112,18 @@ function NumericRangeSlider({ def, recipe, onChange }) {
 
   const set = (patch) => onChange({ ...recipe, ...patch });
 
+  // Snap `stop` to start + N*step so the displayed stop always equals
+  // the last value the cartesian will actually produce. Clamps to the
+  // schema's max so a too-aggressive snap doesn't overshoot the bound,
+  // and rounds the result back to int granularity for int params.
+  const snapStop = (start, stop, step) => {
+    if (!Number.isFinite(step) || step <= 0) return stop;
+    const n = Math.max(0, Math.round((stop - start) / step));
+    let snapped = start + n * step;
+    if (snapped > schemaMax) snapped = start + Math.floor((schemaMax - start) / step) * step;
+    return isInt ? Math.round(snapped) : Number(snapped.toFixed(6));
+  };
+
   return (
     <div className="flex items-center gap-3 min-w-0">
       {/* Range area gets 2x the flex grow of the step area so the
@@ -125,7 +137,12 @@ function NumericRangeSlider({ def, recipe, onChange }) {
           step={isInt ? 1 : (schemaStepDefault ?? span / 200)}
           valueA={Number(recipe.start)}
           valueB={Number(recipe.stop)}
-          onChange={(a, b) => set({ start: isInt ? Math.round(a) : a, stop: isInt ? Math.round(b) : b })}
+          onChange={(a, b) => {
+            const start = isInt ? Math.round(a) : a;
+            const step  = Number(recipe.step) || stepGran;
+            const stop  = snapStop(start, isInt ? Math.round(b) : b, step);
+            set({ start, stop });
+          }}
         />
         <span className="text-[10px] text-muted tnum w-8 text-left shrink-0">{fmt(recipe.stop, isInt)}</span>
       </div>
@@ -137,7 +154,12 @@ function NumericRangeSlider({ def, recipe, onChange }) {
           max={maxStep}
           step={stepGran}
           value={Number(recipe.step) || minStep}
-          onChange={(e) => set({ step: isInt ? Math.round(+e.target.value) : +e.target.value })}
+          onChange={(e) => {
+            const step = isInt ? Math.round(+e.target.value) : +e.target.value;
+            // Re-snap stop so the displayed end stays = last actual value.
+            const stop = snapStop(Number(recipe.start), Number(recipe.stop), step);
+            set({ step, stop });
+          }}
           className="flex-1 min-w-0"
         />
         <span className="text-[10px] text-muted tnum w-8 text-right shrink-0">{fmt(recipe.step, isInt)}</span>
