@@ -19,6 +19,10 @@ import {
 } from '../data/sweepClient';
 
 const STRATEGY = 'xovd_v1';
+// Hard cap that mirrors coord/sweep_recipe.py:HARD_CONFIG_CEILING. Submit
+// is disabled and the count badge turns red above this; coord rejects
+// with a 400 anyway, but the UI gives feedback before the round-trip.
+const MAX_CONFIGS = 100_000_000;
 
 // Universal categories (per schema's section.category). Order matters
 // for display. Lifecycle is collapsed by default.
@@ -202,7 +206,7 @@ export default function LabSweeps() {
 // Sticky badge anchored to the form column's right edge so it doesn't
 // overlap the results pane.
 function BottomDimBadge({ total, formWidth }) {
-  const tooBig = total > 10_000_000;
+  const tooBig = total > MAX_CONFIGS;
   const empty  = total < 1;
   return (
     <div className="absolute bottom-2 pointer-events-none"
@@ -322,7 +326,7 @@ function flattenRows(section) {
 // ── Toolbar ─────────────────────────────────────────────────────────
 function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
                    submitError, drawerOpen, onToggleDrawer }) {
-  const tooBig = total > 10_000_000;
+  const tooBig = total > MAX_CONFIGS;
   const empty  = total < 1;
   const running = job && (job.meta?.state === 'starting' || job.meta?.state === 'running');
   return (
@@ -334,6 +338,12 @@ function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
           {submitError}
         </span>
       )}
+      {tooBig && !submitError && (
+        <span className="text-short text-[11px] font-semibold"
+              title={`hard cap is ${fmtCount(MAX_CONFIGS)}; reduce sweep dims or step granularity`}>
+          ! exceeds {fmtCount(MAX_CONFIGS)} cap
+        </span>
+      )}
       <span className="ml-auto flex items-center gap-3">
         <span className="text-muted text-[11px] tnum">
           total configs <span className={
@@ -342,6 +352,7 @@ function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
             total > 1_000_000 ? 'text-accent font-bold' :
                                 'text-text font-semibold'
           }>{fmtCount(total)}</span>
+          {tooBig && <span className="text-short ml-1">/ {fmtCount(MAX_CONFIGS)} cap</span>}
         </span>
         <button
           type="button"
@@ -367,7 +378,9 @@ function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
             type="button"
             disabled={submitting || empty || tooBig}
             onClick={onSubmit}
-            title={tooBig ? 'reduce sweep before submitting' : 'POST recipe to coord /api/sweeps'}
+            title={tooBig
+              ? `recipe exceeds ${fmtCount(MAX_CONFIGS)}-config hard cap; reduce sweep dims or step granularity before submitting`
+              : 'POST recipe to coord /api/sweeps'}
             className={'px-3 py-0.5 rounded border ' +
               ((submitting || empty || tooBig)
                 ? 'bg-accent/10 text-accent border-accent/30 opacity-40 cursor-not-allowed'
