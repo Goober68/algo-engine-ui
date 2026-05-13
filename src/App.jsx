@@ -49,8 +49,8 @@ function TopHeader() {
       <nav className="flex gap-0.5 text-xs ml-3">
         <Tab1 to="/" match={['/', '/r/*']}>Runners</Tab1>
         <Tab1 to="/runs">Runs</Tab1>
-        <Tab1 to="/lab">Lab</Tab1>
-        <Tab1 to="/historical">Historical</Tab1>
+        <Tab1 to="/lab" match={['/lab', '/lab/*']}>Lab</Tab1>
+        <Tab1 to="/historical" match={['/historical', '/historical/*']}>Historical</Tab1>
         <Tab1 to="/settings">Settings</Tab1>
       </nav>
       <div className="ml-auto">

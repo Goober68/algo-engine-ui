@@ -65,6 +65,12 @@ export async function getSweepMeta(sweepId) {
   return r.json();
 }
 
+export async function listSweeps() {
+  const r = await fetch(`${coordBase()}/api/sweeps`);
+  if (!r.ok) throw new Error(`list sweeps failed: HTTP ${r.status}`);
+  return r.json();
+}
+
 export async function cancelSweep(sweepId) {
   const r = await fetch(`${coordBase()}/api/sweeps/${sweepId}`, {
     method: 'DELETE',

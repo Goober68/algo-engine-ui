@@ -88,3 +88,18 @@ input[type=range]:disabled {
 }
 input[type=range]:disabled::-webkit-slider-thumb { box-shadow: none; }
 input[type=range]:disabled::-moz-range-thumb { box-shadow: none; }
+
+/*
+ * Dual-thumb range slider — two <input type=range> stacked. The track
+ * is transparent (the visible track + filled bar are siblings drawn
+ * by the parent), and the input itself ignores pointer events on its
+ * track so clicks land on the underlying parent — but the thumb stays
+ * grabbable because we re-enable pointer-events on the thumb pseudo.
+ */
+input[type=range].dual-range {
+  pointer-events: none;
+}
+input[type=range].dual-range::-webkit-slider-runnable-track { background: transparent; border-color: transparent; }
+input[type=range].dual-range::-moz-range-track             { background: transparent; border-color: transparent; }
+input[type=range].dual-range::-webkit-slider-thumb { pointer-events: auto; }
+input[type=range].dual-range::-moz-range-thumb    { pointer-events: auto; }
