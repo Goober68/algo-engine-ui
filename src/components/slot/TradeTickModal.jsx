@@ -516,6 +516,29 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
   // Drag-to-pan state. Refs not state -- mid-drag should not re-render.
   const dragRef = useRef(null);
 
+  // Zoom-out / pan bounds. The chart can extend a small margin past
+  // the source [fromNs, toNs] window so the user can SEE that the
+  // edge is the edge of the available data -- but not so far that
+  // they fly off into endless empty space. Margin = 10% of source
+  // span, capped at 8s.
+  const MARGIN_NS = Math.min(8_000_000_000, (toNs - fromNs) * 0.1);
+  const VIEW_MIN_NS = fromNs - MARGIN_NS;
+  const VIEW_MAX_NS = toNs   + MARGIN_NS;
+  const MAX_SPAN_NS = VIEW_MAX_NS - VIEW_MIN_NS;
+  const clampView = (v) => {
+    let { from, to } = v;
+    let span = to - from;
+    if (span > MAX_SPAN_NS) {
+      const mid = (from + to) / 2;
+      from = Math.round(mid - MAX_SPAN_NS / 2);
+      to   = Math.round(mid + MAX_SPAN_NS / 2);
+    }
+    if (from < VIEW_MIN_NS) { to += (VIEW_MIN_NS - from); from = VIEW_MIN_NS; }
+    if (to   > VIEW_MAX_NS) { from -= (to - VIEW_MAX_NS); to   = VIEW_MAX_NS; }
+    if (from < VIEW_MIN_NS) from = VIEW_MIN_NS;
+    return { from, to };
+  };
+
   useEffect(() => {
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
@@ -539,10 +562,10 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
     const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
     const newSpan = Math.max(1_000_000_000, span * factor);   // 1s minimum
     const pivot = view.from + span * fracX;
-    setView({
+    setView(clampView({
       from: Math.round(pivot - newSpan * fracX),
       to:   Math.round(pivot + newSpan * (1 - fracX)),
-    });
+    }));
   };
   const onMouseDown = (e) => {
     if (e.button !== 0) return;   // left-button only
@@ -556,10 +579,10 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
     const span = dragRef.current.to - dragRef.current.from;
     const dxFrac = (e.clientX - dragRef.current.x) / rect.width;
     const shift = -span * dxFrac;
-    setView({
+    setView(clampView({
       from: Math.round(dragRef.current.from + shift),
       to:   Math.round(dragRef.current.to   + shift),
-    });
+    }));
   };
   const onMouseUp   = () => { dragRef.current = null; };
   const onMouseLeave = () => { dragRef.current = null; };
