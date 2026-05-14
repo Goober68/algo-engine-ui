@@ -716,16 +716,17 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
     outOfRange = broker.length - inRange.length;
   }
 
-  // Sub-bar X-coord for an event whose timestamp falls inside some
-  // bar X. v5 timeToCoordinate only returns coords for bar-aligned
-  // times, so look up bar X's and bar X+1's centers and interpolate
-  // linearly across bar X's column based on the fractional offset of
-  // the event within the bar:
-  //   alpha = 0   -> left edge of bar X's column
-  //   alpha = 0.5 -> bar X's center
-  //   alpha = 1   -> right edge of bar X's column (= boundary into X+1)
-  // Falls back to bar X's center if the right neighbour isn't in the
-  // visible range yet (last bar of the loaded set).
+  // Sub-bar X-coord for an event whose timestamp falls inside bar X.
+  // lightweight-charts renders each bar's body CENTERED on its
+  // time-coordinate (= timeToCoordinate(bar.ts)). For an event at
+  // alpha=0 (= the bar's first tick), the natural visual home is the
+  // bar's CENTER, not its left edge -- markers at the left edge sit
+  // on the column boundary and read as belonging to the previous bar
+  // (off-by-one symptom). So map [alpha=0, alpha=1] -> [bar X center,
+  // bar X+1 center] linearly across the gap. Late-bar events (alpha
+  // close to 1) end up on bar X+1, which is also visually correct
+  // because limit fills that bridge a bar boundary belong to the
+  // bar they filled in, not the bar that placed the order.
   const subBarX = (tsNs) => {
     const tSec = tsNs / 1e9;
     const tBar = snap(tSec);
@@ -734,7 +735,7 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
     const xR = ts.timeToCoordinate(tBar + tf);
     if (xR == null) return xL;
     const alpha = (tSec - tBar) / tf;
-    return xL + (alpha - 0.5) * (xR - xL);
+    return xL + alpha * (xR - xL);
   };
 
   // Two layers of triangles, drawn back-to-front:
