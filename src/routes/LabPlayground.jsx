@@ -66,20 +66,22 @@ export default function LabPlayground() {
 
   // Once the session is ready, fetch the dataset's bars for the chart.
   // Bars don't change between RUNs so this is a one-shot per session.
+  // When the session has --indicators, coord merges fast_ma/slow_ma/atr
+  // straight into each bar so the MA overlays just work.
   useEffect(() => {
     if (wsStatus !== 'ready') return;
     let cancelled = false;
     fetchSessionBars()
       .then(d => {
         if (cancelled) return;
-        // Convert coord's seconds-based bar shape to ChartPane's
-        // ts_ns + bar_idx + indicator-slot shape. No indicators yet.
         const bars = (d.bars || []).map((b, i) => ({
           ts_ns:   b.time * 1e9,
           bar_idx: i,
           open:    b.open, high: b.high, low: b.low, close: b.close,
           volume:  b.volume,
-          fast_ma: 0, slow_ma: 0, atr: 0,
+          fast_ma: b.fast_ma ?? 0,
+          slow_ma: b.slow_ma ?? 0,
+          atr:     b.atr     ?? 0,
         }));
         setChartBars(bars);
       })
