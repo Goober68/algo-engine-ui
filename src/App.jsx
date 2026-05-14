@@ -10,6 +10,7 @@ import LabSweeps from './routes/LabSweeps';
 import Settings from './routes/Settings';
 import { useRunMeta, useRunners } from './data/MockDataProvider';
 import CoordSelector from './components/chrome/CoordSelector';
+import DataWindowChip from './components/chrome/DataWindowChip';
 
 export default function App() {
   return (
@@ -121,7 +122,9 @@ function NavRow2Historical() {
 }
 
 // Row-2 variant: Lab sub-modes (interactive engine workloads — explore
-// parameter space rather than review past runs).
+// parameter space rather than review past runs). Right of the tabs:
+// the data-window picker chip; sweep + playground submits auto-default
+// to the active window's bars/ticks coord-side.
 function NavRow2Lab() {
   const location = useLocation();
   const tabs = [
@@ -135,6 +138,7 @@ function NavRow2Lab() {
           {t.label}
         </Tab2>
       ))}
+      <DataWindowChip />
     </div>
   );
 }
