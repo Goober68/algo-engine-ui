@@ -200,7 +200,9 @@ export default function LabPlayground() {
                               tf={tf} setTf={setTf}
                               selectedTradeKey={selectedTradeKey}
                               setSelectedTradeKey={setSelectedTradeKey}
-                              runInFlight={runInFlight} />
+                              runInFlight={runInFlight}
+                              runError={runError}
+                              onClearError={() => setRunError(null)} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
             <EquityCurve stats={tradeStats} trades={trades}
@@ -444,7 +446,7 @@ function fmtPct(v, withSign) {
 // Adapts the playground's bars+trades into the slot/ChartPane data
 // shape. Bars don't change between RUNs, so the chart stays mounted
 // and only the broker (trade markers) layer redraws on each RUN.
-function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey, runInFlight }) {
+function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey, runInFlight, runError, onClearError }) {
   const data = useMemo(() => {
     if (!bars) return null;
     // Overlay each RUN's MAs from decisions[].xovd onto the static
@@ -507,6 +509,28 @@ function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey
                             border-2 border-accent/30 border-t-accent
                             animate-spin" />
           running…
+        </div>
+      )}
+      {runError && !runInFlight && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30
+                        max-w-[80%] px-4 py-2.5 rounded-md
+                        bg-short/90 backdrop-blur-sm border border-short
+                        text-text shadow-2xl
+                        flex items-start gap-3">
+          <span className="text-lg leading-none">⚠</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-[12px] font-semibold uppercase tracking-wide">
+              Run error
+            </div>
+            <div className="text-[11px] mt-0.5 break-all whitespace-pre-wrap">
+              {runError}
+            </div>
+          </div>
+          <button
+            onClick={onClearError}
+            title="dismiss"
+            className="text-text/70 hover:text-text text-lg leading-none px-1"
+          >×</button>
         </div>
       )}
     </div>
