@@ -108,6 +108,9 @@ function NumberInput({ def, value, onChange, disabled }) {
   );
 }
 
+// iOS-style pill: green = on, grey = off, white thumb slides. The
+// prior accent-blue pip-on-stripe felt cramped; this reads as a real
+// switch.
 function BoolToggle({ value, onChange, disabled }) {
   const on = !!value;
   return (
@@ -117,16 +120,17 @@ function BoolToggle({ value, onChange, disabled }) {
       aria-checked={on}
       onClick={() => !disabled && onChange(!on)}
       disabled={disabled}
+      title={on ? 'on' : 'off'}
       className={
-        'relative w-9 h-3.5 rounded-full border transition-colors ' +
-        (on ? 'bg-accent/40 border-accent/60' : 'bg-bg border-border') +
+        'relative w-9 h-5 rounded-full border transition-colors ' +
+        (on ? 'bg-long border-long' : 'bg-panel border-border') +
         ' disabled:opacity-40 disabled:cursor-not-allowed'
       }
     >
       <span
         className={
-          'absolute top-0 w-3.5 h-3.5 rounded-full transition-transform border ' +
-          (on ? 'translate-x-5 bg-accent border-accent' : 'translate-x-0 bg-muted border-border')
+          'absolute top-0.5 w-3.5 h-3.5 rounded-full bg-text shadow-sm transition-transform ' +
+          (on ? 'translate-x-[18px]' : 'translate-x-0.5')
         }
       />
     </button>
