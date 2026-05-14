@@ -97,57 +97,66 @@ export default function SlotView() {
 // Resolves the trade + matching decision from data + the selected key,
 // wires prev/next navigation across the broker trades array.
 function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
-  const trade = data.broker.find(t => t.entry_ts === modalTradeKey);
-  if (!trade) { onClose(); return null; }
+  // Resolve the clicked trade from EITHER source. Prefer broker (its
+  // entry_ts is the canonical "when did we have a position"); fall
+  // back to algo-only when the runner POSTed but no broker fill landed
+  // (cap-suppressed, HTTP error, missed POST, etc).
+  const brokerHit = data.broker.find(t => t.entry_ts === modalTradeKey);
+  const algoHit   = brokerHit ? null
+    : (data.trades || []).find(t => t.entry_ts === modalTradeKey);
+  const focal = brokerHit || algoHit;
+  if (!focal) { onClose(); return null; }
+
+  // Counterpart from the OTHER source. nearestPair pairs on side+qty
+  // within a 5-min window (mirrors TradeTable's MATCH_AHEAD_NS).
+  const brokerTrade = brokerHit || nearestPair(data.broker, focal);
+  const algoTrade   = algoHit   || nearestPair(data.trades || [], focal);
 
   // Match decision by snapping entry to the bar boundary.
   const TF = 180;
-  const entrySec = Math.floor(trade.entry_ts / 1e9);
+  const entrySec = Math.floor(focal.entry_ts / 1e9);
   const barSec   = Math.floor(entrySec / TF) * TF;
   const decision = data.decisions?.find(d =>
     Math.floor(d.ts_ns / 1e9 / TF) * TF === barSec);
 
-  // Match the audit (webhook POST) that produced this fill. Pair on
-  // side+qty within a generous forward window (the POST goes out at
-  // bar close; the limit fills sometime later inside its GTD window).
-  // Pick the nearest unfilled-by-time audit before the entry.
-  const audit = findAuditForTrade(data.audit || [], trade);
+  // Match the audit (webhook POST) that produced this fill.
+  const audit = findAuditForTrade(data.audit || [], focal);
 
-  // Algo-sim counterpart to the clicked broker trade -- pair on
-  // side+qty within a 5-min forward window (matches the TradeTable
-  // pairing tolerance). When found, the modal renders both: solid
-  // broker + hollow algo. Slip / missed-fill becomes visible at the
-  // tick scale where the chart's bar resolution can't show it.
-  const algoTrade = findAlgoCounterpart(data.trades || [], trade);
-
-  const sorted = [...data.broker].sort((a, b) => a.entry_ts - b.entry_ts);
-  const idx = sorted.findIndex(t => t.entry_ts === modalTradeKey);
+  // prev/next nav across the union of broker + algo entry_ts (both
+  // sources visible on the chart, so the user can paddle between
+  // adjacent triangles regardless of which side the trade is from).
+  const allKeys = new Set();
+  for (const t of (data.broker || []))  allKeys.add(t.entry_ts);
+  for (const t of (data.trades || []))  allKeys.add(t.entry_ts);
+  const sorted = [...allKeys].sort((a, b) => a - b);
+  const idx = sorted.indexOf(modalTradeKey);
   const prev = idx > 0                ? sorted[idx - 1] : null;
   const next = idx < sorted.length - 1 ? sorted[idx + 1] : null;
 
   return (
     <TradeTickModal
-      trade={trade}
+      trade={focal}
+      brokerTrade={brokerTrade}
       algoTrade={algoTrade}
       decision={decision}
       audit={audit}
       onClose={onClose}
-      onPrev={prev ? () => onJump(prev.entry_ts) : null}
-      onNext={next ? () => onJump(next.entry_ts) : null}
+      onPrev={prev != null ? () => onJump(prev) : null}
+      onNext={next != null ? () => onJump(next) : null}
     />
   );
 }
 
-// Find the algo-sim trade closest to a broker trade, side + qty matched.
-// 5-min window mirrors TradeTable's MATCH_AHEAD_NS.
-function findAlgoCounterpart(algos, brokerTrade) {
+// Find the trade in `pool` closest to `target`, side + qty matched,
+// within a 5-min window. Used to pair broker<->algo counterparts.
+function nearestPair(pool, target) {
   const WIN_NS = 5 * 60 * 1_000_000_000;
   let best = null, bestD = Infinity;
-  for (const a of algos) {
-    if (a.side !== brokerTrade.side || a.qty !== brokerTrade.qty) continue;
-    const d = Math.abs(a.entry_ts - brokerTrade.entry_ts);
+  for (const t of pool) {
+    if (t.side !== target.side || t.qty !== target.qty) continue;
+    const d = Math.abs(t.entry_ts - target.entry_ts);
     if (d > WIN_NS) continue;
-    if (d < bestD) { bestD = d; best = a; }
+    if (d < bestD) { bestD = d; best = t; }
   }
   return best;
 }

@@ -120,24 +120,32 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
     const slowMa = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 3, priceLineVisible: false, lastValueVisible: false });
 
     // Click-on-candle -> open the trade whose entry-bar is the bar
-    // clicked. Match window = the natural bar (floor(entry_ts/tf))
-    // OR the next bar -- subBarX renders markers smoothly from bar X
-    // center (alpha=0) to bar X+1 center (alpha=1), so a high-alpha
-    // entry has its triangle visually parked on bar X+1 even though
-    // the entry's ts_ns floors to bar X. Without the +tf fallback,
-    // clicking the bar where you SEE the marker misses the trade.
+    // clicked. Checks BOTH broker fills (solid triangles) AND algo
+    // intents (hollow triangles) so an algo-only trade (the runner
+    // POSTed but the broker didn't fill, e.g. cap-suppressed) is
+    // still clickable. Broker is checked first so paired trades
+    // resolve to the broker side (canonical) -- the modal then
+    // surfaces the algo counterpart in its summary.
+    //
+    // Match window = natural bar OR next bar -- subBarX renders
+    // markers smoothly from bar X center (alpha=0) to bar X+1 center
+    // (alpha=1), so a high-alpha entry has its triangle visually on
+    // bar X+1 even though entry_ts floors to bar X.
     chart.subscribeClick((param) => {
       if (!param?.time) return;
-      const broker = currentBrokerRef.current;
-      if (!broker?.length) return;
       const tfNow = currentTfRef.current;
       const clickSec = Number(param.time);
+      const matches = (t) => {
+        const eb = Math.floor(t.entry_ts / 1e9 / tfNow) * tfNow;
+        return eb === clickSec || eb + tfNow === clickSec;
+      };
+      const broker = currentBrokerRef.current || [];
       for (const t of broker) {
-        const entryBar = Math.floor(t.entry_ts / 1e9 / tfNow) * tfNow;
-        if (entryBar === clickSec || entryBar + tfNow === clickSec) {
-          setSelectedTradeKeyRef.current(t.entry_ts);
-          return;
-        }
+        if (matches(t)) { setSelectedTradeKeyRef.current(t.entry_ts); return; }
+      }
+      const algos = currentTradesRef.current || [];
+      for (const t of algos) {
+        if (matches(t)) { setSelectedTradeKeyRef.current(t.entry_ts); return; }
       }
     });
 
@@ -184,10 +192,12 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
   // Refs for click/hover handlers so we don't recreate the chart when
   // broker / decisions / tf / setSelectedTradeKey change.
   const currentBrokerRef = useRef(data?.broker || []);
+  const currentTradesRef = useRef(data?.trades || []);
   const currentDecisionsRef = useRef(data?.decisions || []);
   const currentTfRef = useRef(tf);
   const setSelectedTradeKeyRef = useRef(setSelectedTradeKey);
   useEffect(() => { currentBrokerRef.current = data?.broker || []; }, [data?.broker]);
+  useEffect(() => { currentTradesRef.current = data?.trades || []; }, [data?.trades]);
   useEffect(() => { currentDecisionsRef.current = data?.decisions || []; }, [data?.decisions]);
   useEffect(() => { currentTfRef.current = tf; }, [tf]);
   useEffect(() => { setSelectedTradeKeyRef.current = setSelectedTradeKey; }, [setSelectedTradeKey]);

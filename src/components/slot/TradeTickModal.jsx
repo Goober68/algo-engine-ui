@@ -61,7 +61,12 @@ function tickCacheSet(key, value) {
   }
 }
 
-export default function TradeTickModal({ trade, algoTrade, decision, audit, onClose, onPrev, onNext }) {
+export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision, audit, onClose, onPrev, onNext }) {
+  // `trade` = focal (= the one the user clicked). brokerTrade /
+  // algoTrade may each be the same as focal, the sibling found by
+  // side+qty pairing, or null (algo-only trade with no broker fill,
+  // or vice-versa). Tick window range comes from focal; broker/algo
+  // markers + summary rows come from their respective props.
   const [ticks, setTicks] = useState(null);   // null = loading, [] = no data, [...] = ok
   const [err, setErr] = useState(null);
   const [source, setSource] = useState(null); // 'coord' | 'archive' | null
@@ -198,10 +203,12 @@ export default function TradeTickModal({ trade, algoTrade, decision, audit, onCl
           <div className="space-y-1">
             <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
                 cls={algoTrade ? '' : 'text-muted'} />
-            <KV k="broker entry" kw={92} v={fmtTimePx(trade.entry_ts, trade.entry_px)} />
+            <KV k="broker entry" kw={92} v={fmtTimePx(brokerTrade?.entry_ts, brokerTrade?.entry_px)}
+                cls={brokerTrade ? '' : 'text-muted'} />
             <KV k="algo exit"    kw={92} v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
                 cls={algoTrade ? '' : 'text-muted'} />
-            <KV k="broker exit"  kw={92} v={fmtTimePx(trade.exit_ts, trade.exit_px)} />
+            <KV k="broker exit"  kw={92} v={fmtTimePx(brokerTrade?.exit_ts, brokerTrade?.exit_px)}
+                cls={brokerTrade ? '' : 'text-muted'} />
           </div>
           <div className="space-y-1">
             <KV k="duration" v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
@@ -219,7 +226,7 @@ export default function TradeTickModal({ trade, algoTrade, decision, audit, onCl
           ticks={ticks}
           err={err}
           source={source}
-          trade={trade}
+          brokerTrade={brokerTrade}
           algoTrade={algoTrade}
           slPx={slPx}
           fromNs={fromNs}
@@ -295,7 +302,7 @@ function WebhookPanel({ audit, trade }) {
   );
 }
 
-function TickChart({ ticks, err, source, trade, algoTrade, slPx, fromNs, toNs }) {
+function TickChart({ ticks, err, source, brokerTrade, algoTrade, slPx, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
 
@@ -303,12 +310,12 @@ function TickChart({ ticks, err, source, trade, algoTrade, slPx, fromNs, toNs })
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
     if (!wrap || !cv) return;
-    const draw = () => drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs);
+    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, toNs);
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [ticks, trade, algoTrade, slPx, fromNs, toNs]);
+  }, [ticks, brokerTrade, algoTrade, slPx, fromNs, toNs]);
 
   // Per prime directive: surface where the ticks actually came from.
   // Live ring vs disk archive is meaningful for "is this what the
@@ -350,7 +357,7 @@ function TickChart({ ticks, err, source, trade, algoTrade, slPx, fromNs, toNs })
   );
 }
 
-function drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs) {
+function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, toNs) {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wrap.clientWidth;
   const cssH = wrap.clientHeight;
@@ -376,10 +383,10 @@ function drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs) {
     if (t.ask < pmin) pmin = t.ask;
     if (t.ask > pmax) pmax = t.ask;
   }
-  if (trade.entry_px) { pmin = Math.min(pmin, trade.entry_px); pmax = Math.max(pmax, trade.entry_px); }
-  if (trade.exit_px) { pmin = Math.min(pmin, trade.exit_px); pmax = Math.max(pmax, trade.exit_px); }
-  if (algoTrade?.entry_px) { pmin = Math.min(pmin, algoTrade.entry_px); pmax = Math.max(pmax, algoTrade.entry_px); }
-  if (algoTrade?.exit_px)  { pmin = Math.min(pmin, algoTrade.exit_px);  pmax = Math.max(pmax, algoTrade.exit_px); }
+  if (brokerTrade?.entry_px) { pmin = Math.min(pmin, brokerTrade.entry_px); pmax = Math.max(pmax, brokerTrade.entry_px); }
+  if (brokerTrade?.exit_px)  { pmin = Math.min(pmin, brokerTrade.exit_px);  pmax = Math.max(pmax, brokerTrade.exit_px); }
+  if (algoTrade?.entry_px)   { pmin = Math.min(pmin, algoTrade.entry_px);   pmax = Math.max(pmax, algoTrade.entry_px); }
+  if (algoTrade?.exit_px)    { pmin = Math.min(pmin, algoTrade.exit_px);    pmax = Math.max(pmax, algoTrade.exit_px); }
   if (slPx) { pmin = Math.min(pmin, slPx); pmax = Math.max(pmax, slPx); }
   const pad = (pmax - pmin) * 0.05 || 0.5;
   pmin -= pad; pmax += pad;
@@ -426,17 +433,18 @@ function drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs) {
   drawLine(ctx, ticks, xT, yP, 'ask', '#d4be7a');
 
   // Broker entry/exit (solid) — the ground truth for what executed.
-  // Entry/exit prices live in the header summary KV grid (broker entry,
-  // algo entry, broker exit, algo exit) so chart stays uncluttered.
-  if (trade.entry_ts) {
-    const ex = xT(trade.entry_ts);
-    const ey = yP(trade.entry_px);
-    drawArrow(ctx, ex, ey, trade.side === 'long' ? '#1976d2' : '#ffff00', 'right');
+  // Skip when no broker counterpart exists (algo-only trade -- runner
+  // POSTed but the broker didn't fill); the algo's hollow markers
+  // below carry the rendering on their own.
+  if (brokerTrade?.entry_ts) {
+    const ex = xT(brokerTrade.entry_ts);
+    const ey = yP(brokerTrade.entry_px);
+    drawArrow(ctx, ex, ey, brokerTrade.side === 'long' ? '#1976d2' : '#ffff00', 'right');
   }
-  if (trade.exit_ts && trade.exit_px) {
-    const xx = xT(trade.exit_ts);
-    const yy = yP(trade.exit_px);
-    drawArrow(ctx, xx, yy, trade.pnl > 0 ? '#7fff00' : '#ef5350', 'left');
+  if (brokerTrade?.exit_ts && brokerTrade.exit_px) {
+    const xx = xT(brokerTrade.exit_ts);
+    const yy = yP(brokerTrade.exit_px);
+    drawArrow(ctx, xx, yy, brokerTrade.pnl > 0 ? '#7fff00' : '#ef5350', 'left');
   }
   // Algo-sim entry/exit (hollow) — what the runner THOUGHT it filled at.
   // Compare to the solid broker arrow at the same position to see slip
