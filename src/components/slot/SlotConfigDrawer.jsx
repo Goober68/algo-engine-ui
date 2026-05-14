@@ -55,9 +55,10 @@ const META_FIELDS = [
 const META_KEYS = new Set(META_FIELDS.map(f => f.name));
 
 // Mirror of xovdDefaultSessions() in backtester/runtime/sessionMask.h.
-// Used as the placeholder shape until engine-claude lifts these into
-// per-slot config (Stream ask filed today). Times interpreted in the
-// section-level `tz` (separate state).
+// Used as the fallback shape for legacy slot configs whose .jsonl
+// rows pre-date the sessionMode/sessionTz/sessionWindows fields
+// (engine ad16711 falls back to these same defaults when the keys
+// are absent). Times interpreted in the section-level `sessionTz`.
 const DEFAULT_SESSIONS = [
   { startHHMM: 630,  endHHMM: 1155, label: 'S1' },
   { startHHMM: 1205, endHHMM: 1530, label: 'S2' },
@@ -81,9 +82,18 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
       fetchSlotConfig(runnerId, slotIdx),
     ]).then(([s, c]) => {
       if (cancelled) return;
+      // Legacy slot configs may lack sessionMode/sessionTz/
+      // sessionWindows. Engine treats absent keys as "use the
+      // hardcoded xovdDefaultSessions" -- mirror that defaulting
+      // into baseline so the editor doesn't immediately light up
+      // dirty just because we filled in the displayed values.
+      const cfg = { ...c.config };
+      if (cfg.sessionMode    == null) cfg.sessionMode    = 'include';
+      if (cfg.sessionTz      == null) cfg.sessionTz      = DEFAULT_MARKET_TZ;
+      if (cfg.sessionWindows == null) cfg.sessionWindows = DEFAULT_SESSIONS;
       setSchema(s);
-      setBaseline(c.config);
-      setValues({ ...c.config });
+      setBaseline(cfg);
+      setValues({ ...cfg });
     }).catch(e => {
       if (!cancelled) setErr(e.message || String(e));
     });
@@ -128,15 +138,11 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
     setBusy(true);
     try {
       // Engine's reinit protocol wants the FULL XovdV1Config row, not
-      // a patch. Build it: baseline + edited values, minus the local
-      // __sessionMode/__sessionTz/__sessionWindows/__sessionDirty
-      // pseudo-fields (engine doesn't know those keys yet -- they're
-      // for the session-windows preview section, pending Stream ask).
+      // a patch. Spread baseline + the edited values for every dirty
+      // key (sessionMode/sessionTz/sessionWindows now live in the
+      // canonical schema slot, so no special-casing needed).
       const fullCfg = { ...baseline };
-      for (const k of dirtyKeys) {
-        if (k.startsWith('__')) continue;
-        fullCfg[k] = values[k];
-      }
+      for (const k of dirtyKeys) fullCfg[k] = values[k];
       const ack = await applySlotConfig(runnerId, slotIdx, fullCfg);
       if (ack.ok) {
         setToast({ ok: true, text: ack.shape_changed
@@ -145,8 +151,7 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
         // Promote the just-applied values to the new baseline so the
         // dirty-edit highlights clear.
         setBaseline({ ...baseline, ...Object.fromEntries(
-          [...dirtyKeys].filter(k => !k.startsWith('__'))
-            .map(k => [k, values[k]])
+          [...dirtyKeys].map(k => [k, values[k]])
         )});
       } else {
         // Engine error string is operator-readable -- pass through.
@@ -201,19 +206,18 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
           )}
           {schema && values && (
             <SchemaSection id="slotcfg.session"
-                           title="Session windows"
-                           badge={values.__sessionDirty ? 'edited (preview)' : 'preview'}
+                           title="Trading hours"
+                           badge={sessionDirtyBadge(dirtyKeys)}
                            defaultOpen={false}>
               <SessionWindowsEditor
-                mode={values.__sessionMode || 'include'}
-                tz={values.__sessionTz || DEFAULT_MARKET_TZ}
-                windows={values.__sessionWindows || DEFAULT_SESSIONS}
+                mode={values.sessionMode}
+                tz={values.sessionTz}
+                windows={values.sessionWindows}
                 onChange={(m, t, w) => setValues(prev => ({
                   ...prev,
-                  __sessionMode: m,
-                  __sessionTz: t,
-                  __sessionWindows: w,
-                  __sessionDirty: true,
+                  sessionMode: m,
+                  sessionTz: t,
+                  sessionWindows: w,
                 }))}
               />
             </SchemaSection>
@@ -376,11 +380,23 @@ function shallowEq(a, b) {
   if (typeof a === 'number' && typeof b === 'number') {
     return Math.abs(a - b) < 1e-9;
   }
+  // Arrays + objects (sessionWindows is an array of objects). String-
+  // coerce would collapse to "[object Object]" and miss real edits.
+  if (a && typeof a === 'object' && b && typeof b === 'object') {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
   return String(a) === String(b);
 }
 
+const SESSION_KEYS = new Set(['sessionMode', 'sessionTz', 'sessionWindows']);
+function sessionDirtyBadge(dirtyKeys) {
+  let n = 0;
+  for (const k of SESSION_KEYS) if (dirtyKeys.has(k)) n++;
+  return n > 0 ? `${n} edited` : null;
+}
+
 // ──────────────────────────────────────────────────────────────────────
-// Session-windows editor (preview)
+// Trading-hours editor
 //
 // Two modes:
 //   'include' = trade ONLY inside the listed windows (current runner
@@ -389,9 +405,10 @@ function shallowEq(a, b) {
 //                xovdDefaultExclusions() alternative -- narrow blocks
 //                around bad-window minutes Niall identified 2026-05-12)
 //
-// Engine doesn't yet read these from per-slot cfg (Stream ask filed);
-// this section is shape-preview that lets Niall see the editor UX +
-// validate the model before engine-claude commits to a schema.
+// Wires the canonical sessionMode/sessionTz/sessionWindows keys
+// engine ad16711 reads from per-slot cfg. Hot-swap path: Apply
+// triggers a reinit; engine treats session changes as hot-swappable
+// (next bar's mask reflects new config).
 // ──────────────────────────────────────────────────────────────────────
 function SessionWindowsEditor({ mode, tz, windows, onChange }) {
   const setMode = (m) => onChange(m, tz, windows);
@@ -450,13 +467,9 @@ function SessionWindowsEditor({ mode, tz, windows, onChange }) {
         + Add window
       </button>
       <div className="mt-2 text-[10px] text-muted leading-relaxed">
-        Engine reads {' '}
-        <code className="text-text bg-bg/60 px-1 rounded">xovdDefaultSessions()</code>
-        {' '} (hardcoded NY ET, requires rebuild) today. This editor
-        is shape-preview pending Stream ask: lift sessions to per-slot
-        cfg with one IANA TZ for all windows. Engine-side must resolve
-        TZ via tzdata so DST flips are correct -- never assume EST/EDT
-        from a label string.
+        Hot-swappable -- Apply pushes via reinit and the next bar's
+        mask reflects the new windows. TZ resolves via tzdata so DST
+        flips correctly.
       </div>
     </div>
   );
