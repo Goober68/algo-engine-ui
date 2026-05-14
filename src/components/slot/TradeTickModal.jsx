@@ -228,7 +228,10 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           source={source}
           brokerTrade={brokerTrade}
           algoTrade={algoTrade}
+          entryPx={trade.entry_px}
+          side={trade.side}
           slPx={slPx}
+          tsPx={tsPx}
           fromNs={fromNs}
           toNs={toNs}
         />
@@ -310,7 +313,7 @@ function WebhookPanel({ audit, trade }) {
   );
 }
 
-function TickChart({ ticks, err, source, brokerTrade, algoTrade, slPx, fromNs, toNs }) {
+function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
 
@@ -318,12 +321,12 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, slPx, fromNs, t
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
     if (!wrap || !cv) return;
-    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, toNs);
+    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs);
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [ticks, brokerTrade, algoTrade, slPx, fromNs, toNs]);
+  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs]);
 
   // Per prime directive: surface where the ticks actually came from.
   // Live ring vs disk archive is meaningful for "is this what the
@@ -365,7 +368,7 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, slPx, fromNs, t
   );
 }
 
-function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, toNs) {
+function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs) {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wrap.clientWidth;
   const cssH = wrap.clientHeight;
@@ -396,6 +399,8 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, to
   if (algoTrade?.entry_px)   { pmin = Math.min(pmin, algoTrade.entry_px);   pmax = Math.max(pmax, algoTrade.entry_px); }
   if (algoTrade?.exit_px)    { pmin = Math.min(pmin, algoTrade.exit_px);    pmax = Math.max(pmax, algoTrade.exit_px); }
   if (slPx) { pmin = Math.min(pmin, slPx); pmax = Math.max(pmax, slPx); }
+  if (tsPx) { pmin = Math.min(pmin, tsPx); pmax = Math.max(pmax, tsPx); }
+  if (entryPx) { pmin = Math.min(pmin, entryPx); pmax = Math.max(pmax, entryPx); }
   const pad = (pmax - pmin) * 0.05 || 0.5;
   pmin -= pad; pmax += pad;
   const xT = (ts) => x0 + (x1 - x0) * (ts - fromNs) / (toNs - fromNs);
@@ -423,18 +428,14 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, to
     ctx.fillText(lbl, x, y1 + 4);
   }
 
-  // SL line
-  if (slPx != null) {
-    const y = yP(slPx);
-    ctx.strokeStyle = '#ef5350';
-    ctx.setLineDash([4, 3]);
-    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#ef5350';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText(`SL ${slPx.toFixed(2)}`, x0 + 4, y - 2);
-  }
+  // Bracket lines: entry / SL / TT, all dotted, color-coded.
+  // Entry line uses the same blue/yellow as the entry triangles so
+  // long vs short reads at a glance; TT line uses the trail orange
+  // (matches text-trail in the summary KV grid).
+  const entryColor = side === 'long' ? '#1976d2' : '#ffff00';
+  drawHLine(ctx, x0, x1, yP, entryPx, entryColor, `entry ${entryPx?.toFixed(2)}`);
+  drawHLine(ctx, x0, x1, yP, slPx,    '#ef5350', slPx ? `SL ${slPx.toFixed(2)}` : null);
+  drawHLine(ctx, x0, x1, yP, tsPx,    '#fb923c', tsPx ? `TT ${tsPx.toFixed(2)}` : null);
 
   // bid line (cyan-ish, like playground) and ask (amber)
   drawLine(ctx, ticks, xT, yP, 'bid', '#7fc6d4');
@@ -466,6 +467,26 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, slPx, fromNs, to
     const xx = xT(algoTrade.exit_ts);
     const yy = yP(algoTrade.exit_px);
     drawArrow(ctx, xx, yy, (algoTrade.pnl ?? 0) > 0 ? '#7fff00' : '#ef5350', 'left', /*hollow*/ true);
+  }
+}
+
+// Dotted horizontal line at price `p` spanning the chart width with
+// a small label at the left edge. Used for entry / SL / TT brackets
+// on the per-trade tick chart.
+function drawHLine(ctx, x0, x1, yP, p, color, label) {
+  if (p == null || !Number.isFinite(p)) return;
+  const y = yP(p);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+  ctx.setLineDash([]);
+  if (label) {
+    ctx.fillStyle = color;
+    ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(label, x0 + 4, y - 2);
   }
 }
 
