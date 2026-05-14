@@ -50,6 +50,7 @@ export default function SlotView() {
             setTf={setTf}
             selectedTradeKey={selectedTradeKey}
             setSelectedTradeKey={(k) => { setSelectedTradeKey(k); setModalTradeKey(k); }}
+            live
           />
         </div>
         <Splitter dir="col" size={railPx} setSize={setRailPx} min={220} max={700} invert />

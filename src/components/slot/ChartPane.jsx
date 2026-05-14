@@ -49,7 +49,7 @@ const TF_OPTIONS = [
   { sec: 3600, label: 'H1' },
 ];
 
-export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelectedTradeKey, runnerId, onChartReady }) {
+export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelectedTradeKey, runnerId, onChartReady, live = false }) {
   const wrapRef = useRef(null);
   const chartDivRef = useRef(null);
   const overlayRef = useRef(null);
@@ -436,13 +436,15 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
           fit
         </button>
       </div>
-      <div className="absolute top-2 right-2 z-10 px-2 py-0.5 rounded bg-panel/90 border border-border text-[10px] text-muted tnum flex items-center gap-3">
-        <BarCloseCountdown periodSec={tf} />
-        <span className="opacity-60">
-          broker {data?.broker?.length || 0} · markers {markerStats.drawn}/{markerStats.total}
-          {markerStats.outOfRange > 0 && <> · <span className="text-trail">{markerStats.outOfRange} off-range</span></>}
-        </span>
-      </div>
+      {live && (
+        <div className="absolute top-2 right-2 z-10 px-2 py-0.5 rounded bg-panel/90 border border-border text-[10px] text-muted tnum flex items-center gap-3">
+          <BarCloseCountdown periodSec={tf} />
+          <span className="opacity-60">
+            broker {data?.broker?.length || 0} · markers {markerStats.drawn}/{markerStats.total}
+            {markerStats.outOfRange > 0 && <> · <span className="text-trail">{markerStats.outOfRange} off-range</span></>}
+          </span>
+        </div>
+      )}
       <div ref={chartDivRef} className="absolute inset-0" />
       {/* z-index 10: lightweight-charts creates an internal stacking
           context with its own canvases. Without explicit z-index here
