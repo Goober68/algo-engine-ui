@@ -1,11 +1,13 @@
-// Compact one-line-ish param row used by the playground. Renders an
-// int/float as a slider, bool as a toggle, enum as chip buttons
-// (radio), string as a text input. Mirrors SweepRow's label/hover
-// polish so the two layouts feel like siblings.
+// Compact one-line param row for the playground. Single horizontal
+// strip: [label] [control flex-1] [value]. Mirrors SweepRow's density
+// while keeping playground's slider-driven editing (sweep tab uses
+// number inputs in fixed mode; playground keeps continuous sliders
+// because the live-rerun loop is the whole point of the tab).
 //
-// Two-row layout: [label + value] / [control full-width below].
-// Sliders need horizontal real estate so the value-on-top + slider-
-// below pattern is denser than inlining the slider with the label.
+// Layout per row:
+//   label   ~108px   (truncates with hover-tooltip on full label/key)
+//   control flex-1   (slider / chips / toggle / text input)
+//   value   ~44px    (right-aligned current value, accent-coloured)
 
 import { camelToLabel, paramHoverTitle } from './schemaLabels';
 
@@ -16,29 +18,36 @@ export default function ParamRow({ schemaField, value, onChange, disabled = fals
   if (!schemaField) return null;
   const def = schemaField;
   const label = def.label || camelToLabel(def.name);
-
+  // Value column is redundant when the control already displays the
+  // value (enum chips show the active option; bool toggle shows on/off
+  // by position). Hide for those — the slider/number-input row keeps
+  // the readout because slider position alone is imprecise.
+  const showValueCol = !(def.type === 'enum' || def.type === 'bool');
   return (
-    <div className="px-3 py-px border-b border-border/20 hover:bg-accent/[0.03]">
-      <div className="flex items-baseline justify-between mb-px">
+    <div className="px-2 py-px border-b border-border/20 hover:bg-accent/[0.03]">
+      <div className="flex items-center gap-1.5">
         <span
-          className="text-[11px] text-text truncate"
+          className="text-[11px] text-text truncate w-[108px] shrink-0"
           title={paramHoverTitle(def)}
         >
           {label}
         </span>
-        <span className="text-[12px] font-bold text-accent tnum">
-          {formatValue(def, value)}
-        </span>
+        <div className="flex-1 min-w-0">
+          <Control def={def} value={value} onChange={onChange} disabled={disabled} />
+        </div>
+        {showValueCol && (
+          <span className="text-[11px] font-bold text-accent tnum w-[44px] text-right shrink-0">
+            {formatValue(def, value)}
+          </span>
+        )}
       </div>
-      <Control def={def} value={value} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
 
 function Control({ def, value, onChange, disabled }) {
-  // Some keys we want as a free-text number rather than a slider
-  // (drag isn't useful for them — risk dollars, max contracts, etc).
-  // Heuristic for the playground; sweep UI overrides explicitly.
+  // Some keys are free-text rather than slider (drag isn't useful for
+  // them — risk dollars, max contracts, etc).
   const useText = def.text_input
     || (NUMERIC.has(def.type) && def.sweep_range == null)
     || (def.name === 'riskDollars');
@@ -53,7 +62,7 @@ function Control({ def, value, onChange, disabled }) {
     return <NumberInput def={def} value={value} onChange={onChange} disabled={disabled} />;
   }
   if (NUMERIC.has(def.type)) {
-    return <SliderRow def={def} value={value} onChange={onChange} disabled={disabled} />;
+    return <SliderInline def={def} value={value} onChange={onChange} disabled={disabled} />;
   }
   if (def.type === 'string') {
     return <TextInput value={value} onChange={onChange} disabled={disabled} />;
@@ -61,24 +70,23 @@ function Control({ def, value, onChange, disabled }) {
   return <span className="text-[10px] text-muted">unknown type {String(def.type)}</span>;
 }
 
-function SliderRow({ def, value, onChange, disabled }) {
+// Single inline range slider — no min/max labels (those leak to the
+// hover tooltip via title attr). Tight vertical track keeps each row
+// at ~16px instead of the old ~36px stacked layout.
+function SliderInline({ def, value, onChange, disabled }) {
   const [min, step, max] = def.sweep_range || [0, def.type === 'int' ? 1 : 0.01, 100];
   return (
-    <div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(coerce(def, e.target.value))}
-      />
-      <div className="flex justify-between text-[9px] text-muted/60 tnum -mt-0.5">
-        <span>{min}</span>
-        <span>{max}</span>
-      </div>
-    </div>
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      disabled={disabled}
+      title={`${min} … ${max}`}
+      onChange={(e) => onChange(coerce(def, e.target.value))}
+      className="w-full block"
+    />
   );
 }
 
@@ -95,7 +103,7 @@ function NumberInput({ def, value, onChange, disabled }) {
       step={step}
       disabled={disabled}
       onChange={(e) => onChange(coerce(def, e.target.value))}
-      className="w-full px-2 py-0.5 bg-bg border border-border rounded text-text text-[12px] tnum disabled:opacity-40"
+      className="w-full px-2 py-0 bg-bg border border-border rounded text-text text-[11px] tnum h-5 disabled:opacity-40"
     />
   );
 }
@@ -110,14 +118,14 @@ function BoolToggle({ value, onChange, disabled }) {
       onClick={() => !disabled && onChange(!on)}
       disabled={disabled}
       className={
-        'relative w-9 h-4 rounded-full border transition-colors ' +
+        'relative w-9 h-3.5 rounded-full border transition-colors ' +
         (on ? 'bg-accent/40 border-accent/60' : 'bg-bg border-border') +
         ' disabled:opacity-40 disabled:cursor-not-allowed'
       }
     >
       <span
         className={
-          'absolute top-0 w-4 h-4 rounded-full transition-transform border ' +
+          'absolute top-0 w-3.5 h-3.5 rounded-full transition-transform border ' +
           (on ? 'translate-x-5 bg-accent border-accent' : 'translate-x-0 bg-muted border-border')
         }
       />
@@ -125,8 +133,7 @@ function BoolToggle({ value, onChange, disabled }) {
   );
 }
 
-// Radio-style chip picker. Falls back to a dropdown when there are
-// too many options to fit on a single line of chips.
+// Radio chips when option count fits one inline row; dropdown otherwise.
 function EnumChips({ def, value, onChange, disabled }) {
   const options = Array.isArray(def.values) ? def.values : [];
   if (options.length > ENUM_CHIP_THRESHOLD) {
@@ -135,7 +142,7 @@ function EnumChips({ def, value, onChange, disabled }) {
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-2 py-0.5 bg-bg border border-border rounded text-text text-[12px] disabled:opacity-40"
+        className="w-full px-1 py-0 bg-bg border border-border rounded text-text text-[11px] h-5 disabled:opacity-40"
       >
         {options.map(o => (
           <option key={String(o)} value={String(o)}>{String(o)}</option>
@@ -145,7 +152,7 @@ function EnumChips({ def, value, onChange, disabled }) {
   }
   const current = String(value ?? def.default);
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="flex gap-0.5">
       {options.map(o => {
         const v = String(o);
         const on = v === current;
@@ -156,7 +163,7 @@ function EnumChips({ def, value, onChange, disabled }) {
             disabled={disabled}
             onClick={() => onChange(v)}
             className={
-              'px-1.5 py-0.5 rounded border text-[10px] disabled:opacity-40 ' +
+              'px-1.5 py-0 rounded border text-[10px] h-5 disabled:opacity-40 ' +
               (on
                 ? 'bg-accent/20 text-accent border-accent/60'
                 : 'bg-bg text-muted border-border hover:border-muted')
@@ -177,7 +184,7 @@ function TextInput({ value, onChange, disabled }) {
       value={value ?? ''}
       disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full px-2 py-0.5 bg-bg border border-border rounded text-text text-[12px] disabled:opacity-40"
+      className="w-full px-2 py-0 bg-bg border border-border rounded text-text text-[11px] h-5 disabled:opacity-40"
     />
   );
 }
