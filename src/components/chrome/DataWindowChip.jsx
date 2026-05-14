@@ -99,15 +99,20 @@ export default function DataWindowChip() {
     return () => es.close();
   }, [activeBuildJobId]);
 
-  // Hide the chip entirely when the coord doesn't host data-windows
-  // (503 from the list endpoint). No reason to show a broken affordance.
-  if (loadErr?.includes('503')) return null;
+  // When the active 'sweep' coord doesn't host data-windows
+  // (e.g. the user's sweep scope is pointed at the VPS coord),
+  // surface that explicitly rather than hiding the chip -- a
+  // hidden chip is a confusing user experience.
+  const featureMissing = loadErr?.includes('503');
 
   const active = snapshot?.windows?.find(w => w.id === snapshot.active_id);
-  const label = active ? fmtRange(active.from, active.to)
+  const label = featureMissing ? 'no data-windows on this coord'
+              : loadErr        ? 'unreachable'
+              : active         ? fmtRange(active.from, active.to)
               : snapshot?.windows?.length ? 'Pick a window'
-              : 'Build a window';
-  const disabled = !snapshot && !loadErr;
+              : snapshot       ? 'Build a window'
+              :                  'loading…';
+  const disabled = featureMissing || (!snapshot && !loadErr);
 
   return (
     <div className="relative ml-3">
