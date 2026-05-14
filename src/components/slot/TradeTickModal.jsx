@@ -384,7 +384,7 @@ function ChartLegendPanel() {
           <LegendSwatch color="rgba(127,255,0,0.5)" small />
           <LegendSwatch color="rgba(127,255,0,0.5)" />
           <LegendSwatch color="rgba(127,255,0,0.5)" big />
-          <span className="text-muted ml-1">size = radius (sum at tick)</span>
+          <span className="text-muted ml-1">size = radius + opacity</span>
         </LegendRow>
         <LegendRow>
           <span className="text-muted italic">prints hidden when window ≥ 30s</span>
@@ -753,15 +753,21 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
       }
     }
     for (const t of buckets.values()) {
-      // sqrt scale -- log2 was too flat to read past tiny clusters.
-      // sz=1 -> +0.5, sz=16 -> +2, sz=100 -> +5, capped at +6 so a
-      // monster cluster doesn't blot out the rest of the chart.
-      const r = baseR + Math.min(6, Math.sqrt(t.size || 1) * 0.5);
+      const sz = t.size || 1;
+      // Two channels encode size: radius (sqrt ramp, cap +10) and
+      // opacity (log10 ramp, 0.4 -> 0.85). Both go up with sz so a
+      // big cluster reads as both bigger AND more saturated, while a
+      // 1-lot is small AND faint and stays out of the way.
+      //   r:     sz=1 +0.9 | sz=16 +3.6 | sz=100 +9 | sz=124+ cap +10
+      //   alpha: sz=1 0.48 | sz=10 0.66 | sz=50 0.83 | sz=100+ cap 0.85
+      const r = baseR + Math.min(10, Math.sqrt(sz) * 0.9);
+      const alpha = Math.min(0.85, 0.4 + Math.log10(sz + 1) * 0.25);
+      const rgb = t.side === 'B' ? '239,83,80'
+                : t.side === 'A' ? '127,255,0'
+                :                  '124,129,144';
       const cx = t.sumX / t.wsum;
       const cy = t.sumY / t.wsum;
-      ctx.fillStyle = t.side === 'B' ? 'rgba(239,83,80,0.5)'
-                    : t.side === 'A' ? 'rgba(127,255,0,0.5)'
-                    :                  'rgba(124,129,144,0.5)';
+      ctx.fillStyle = `rgba(${rgb},${alpha.toFixed(3)})`;
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
