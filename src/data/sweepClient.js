@@ -37,10 +37,13 @@ export function getDefaults() { return DEFAULTS; }
 // to override the env defaults.
 export async function submitSweep(recipePayload, overrides = {}) {
   const body = { ...(DEFAULTS || {}), ...overrides, ...recipePayload };
-  // `binary` is no longer required from the UI -- coord resolves the
-  // path per target via [target.<name>.binaries] in coord_config.toml.
-  // Pass `binary` in overrides if you want to bypass that lookup.
-  const required = ['bars', 'ticks', 'strategy', 'recipe'];
+  // `binary`     resolves coord-side via [target.<name>.binaries].
+  // `bars/ticks` resolve coord-side from the active data window
+  //              (Timeframe chip) when not in body -- so the UI
+  //              doesn't pre-check them. Coord 400s with a clear
+  //              message if no active window is set and the body
+  //              omits paths.
+  const required = ['strategy', 'recipe'];
   const missing = required.filter(k => !body[k]);
   if (missing.length) {
     throw new Error(

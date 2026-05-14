@@ -47,12 +47,14 @@ export function getLastError() { return lastError; }
 // to replace the defaults.
 export async function start(overrides = {}) {
   const body = { ...(DEFAULTS || {}), ...overrides };
-  // `binary` is no longer required from the UI -- coord resolves the
-  // path per target via [target.<name>.binaries] in coord_config.toml.
-  // Pass `binary` in overrides if you want to bypass that lookup.
-  // `indicators` was required pre-engine-claude#8ca6a69 (engine default
-  // is now STREAMING -- precomputed AEIB is opt-in micro-perf only).
-  const required = ['dataset_base', 'set_path'];
+  // `binary` resolves coord-side via [target.<name>.binaries].
+  // `dataset_base` resolves coord-side from the active data window
+  // (Timeframe chip) when not in body -- so the UI doesn't pre-check
+  // it. `set_path` is the only field that still has to ride along
+  // (per-account, no coord-side registry yet).
+  // `indicators` was required pre-engine-claude#8ca6a69 (engine
+  // default is now STREAMING -- precomputed AEIB is opt-in).
+  const required = ['set_path'];
   const missing = required.filter(k => !body[k]);
   if (missing.length) {
     lastError = `playground defaults missing: ${missing.join(', ')} ` +
