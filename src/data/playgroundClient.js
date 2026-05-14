@@ -50,7 +50,9 @@ export async function start(overrides = {}) {
   // `binary` is no longer required from the UI -- coord resolves the
   // path per target via [target.<name>.binaries] in coord_config.toml.
   // Pass `binary` in overrides if you want to bypass that lookup.
-  const required = ['dataset_base', 'indicators', 'set_path'];
+  // `indicators` was required pre-engine-claude#8ca6a69 (engine default
+  // is now STREAMING -- precomputed AEIB is opt-in micro-perf only).
+  const required = ['dataset_base', 'set_path'];
   const missing = required.filter(k => !body[k]);
   if (missing.length) {
     lastError = `playground defaults missing: ${missing.join(', ')} ` +
