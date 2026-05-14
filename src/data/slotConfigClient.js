@@ -30,13 +30,33 @@ export async function fetchSlotConfig(runnerId, slotIdx) {
   return r.json();   // { runner_id, slot_idx, config, source }
 }
 
-// Engine ships POST /r/{rid}/s/{N}/reinit eventually -- per L131/L132
-// of the devstream Stream. Until then this rejects loudly so the
-// UI doesn't pretend a no-op succeeded.
-export async function applySlotConfig(/*runnerId, slotIdx, cfgPatch*/) {
-  throw new Error(
-    "Apply not wired -- engine-side POST /r/{rid}/s/{N}/reinit not " +
-    "shipped yet. Tracking via devstream Stream L131/L132 (snapshot/" +
-    "restore + per-slot reinit endpoint)."
-  );
+// POST the slot's full edited config to coord, which atomic-writes
+// pending_reinit_slot{N}.jsonl into the runner's log_dir. The engine's
+// file watcher fires within ~10ms; runner queues + drains at top of
+// the next tick (~250ms). Coord polls reinit_slot{N}_ack.json and
+// returns the ack JSON to us.
+//
+// Ack shape: { slot_idx, request_ts_ns, applied_ts_ns, ok, shape_changed,
+//              error }
+//
+// Throws on:
+//   - HTTP error (network, 4xx, 5xx) -- caller surfaces e.message
+//   - ack timeout (coord 504) -- pending file IS on disk; runner will
+//     apply on the next tick. Caller can choose to refetch config to
+//     see if it landed.
+//
+// Returns ack as-is. UI inspects ack.ok / ack.shape_changed to render
+// the right toast.
+export async function applySlotConfig(runnerId, slotIdx, cfgPatch) {
+  const url = `${coordBase()}/r/${runnerId}/s/${slotIdx}/reinit`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cfg: cfgPatch }),
+  });
+  if (!r.ok) {
+    const text = await r.text().catch(() => `HTTP ${r.status}`);
+    throw new Error(`reinit failed: ${text}`);
+  }
+  return r.json();
 }

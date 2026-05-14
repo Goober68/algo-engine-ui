@@ -124,16 +124,38 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
   const apply = async () => {
     setBusy(true);
     try {
-      const patch = {};
-      for (const k of dirtyKeys) patch[k] = values[k];
-      await applySlotConfig(runnerId, slotIdx, patch);
-      setToast({ ok: true, text: `Applied ${dirtyKeys.size} change(s)` });
-      setBaseline({ ...baseline, ...patch });
+      // Engine's reinit protocol wants the FULL XovdV1Config row, not
+      // a patch. Build it: baseline + edited values, minus the local
+      // __sessionMode/__sessionTz/__sessionWindows/__sessionDirty
+      // pseudo-fields (engine doesn't know those keys yet -- they're
+      // for the session-windows preview section, pending Stream ask).
+      const fullCfg = { ...baseline };
+      for (const k of dirtyKeys) {
+        if (k.startsWith('__')) continue;
+        fullCfg[k] = values[k];
+      }
+      const ack = await applySlotConfig(runnerId, slotIdx, fullCfg);
+      if (ack.ok) {
+        setToast({ ok: true, text: `Applied ${dirtyKeys.size} change(s)` });
+        // Promote the just-applied values to the new baseline so the
+        // dirty-edit highlights clear.
+        setBaseline({ ...baseline, ...Object.fromEntries(
+          [...dirtyKeys].filter(k => !k.startsWith('__'))
+            .map(k => [k, values[k]])
+        )});
+      } else {
+        setToast({
+          ok: false,
+          text: ack.shape_changed
+            ? `Shape change rejected: ${ack.error || 'indicator-shape fields require a runner restart'}`
+            : `Apply failed: ${ack.error || 'unknown error'}`,
+        });
+      }
     } catch (e) {
       setToast({ ok: false, text: e.message || String(e) });
     } finally {
       setBusy(false);
-      setTimeout(() => setToast(null), 4000);
+      setTimeout(() => setToast(null), 6000);
     }
   };
 
