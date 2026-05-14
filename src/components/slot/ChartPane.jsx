@@ -693,6 +693,9 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
   ctx.clearRect(0, 0, cssW, cssH);
   const ts = chart.timeScale();
   const snap = (t) => Math.floor(t / tf) * tf;
+  // Inactive-session shading goes UNDER everything else (drawn first
+  // so candles + MAs + markers paint over it).
+  drawSessionShading(ctx, chart, canvas, data, tf);
   drawLimitLine(ctx, chart, candles, data, tf, snap);
   // Slow-EMA-anchored "what-if" limit line. No-op when the runner
   // isn't emitting entry_limit_slow yet (engine-claude ask filed in
@@ -845,6 +848,52 @@ function classifyDecision(d) {
   const blocked = d.blocked_layer && d.blocked_layer !== 'none';
   if (isLong) return blocked ? 'long_dim' : 'long_bright';
   return blocked ? 'short_dim' : 'short_bright';
+}
+
+// Translucent grey background over runs of bars where in_session=false
+// (= the runner's session_gate is anything other than "none"). Drawn
+// first so candles/MAs/markers overlay it cleanly. Each contiguous
+// run renders as one rect spanning [first_bar_left_edge,
+// last_bar_right_edge] x full chart height.
+function drawSessionShading(ctx, chart, canvas, data, tf) {
+  const bars = data?.bars;
+  if (!bars || !bars.length) return;
+  const ts = chart.timeScale();
+  const cssH = canvas.clientHeight;
+  // Half-bar visual width on each side of the bar's center.
+  const halfBarPx = (() => {
+    const b = bars[0];
+    const xL = ts.timeToCoordinate(Math.floor(b.ts_ns / 1e9));
+    const xR = ts.timeToCoordinate(Math.floor(b.ts_ns / 1e9) + tf);
+    if (xL == null || xR == null) return 0;
+    return (xR - xL) / 2;
+  })();
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  let runStart = null;   // x-pixel of left edge of the first bar in the run
+  let runEnd = null;     // x-pixel of right edge of the last bar in the run
+  const flush = () => {
+    if (runStart != null && runEnd != null && runEnd > runStart) {
+      ctx.fillRect(runStart, 0, runEnd - runStart, cssH);
+    }
+    runStart = runEnd = null;
+  };
+  for (const b of bars) {
+    if (b.in_session === false) {
+      const x = ts.timeToCoordinate(Math.floor(b.ts_ns / 1e9));
+      if (x == null) continue;
+      const left = x - halfBarPx;
+      const right = x + halfBarPx;
+      if (runStart == null) {
+        runStart = left;
+        runEnd = right;
+      } else {
+        runEnd = right;
+      }
+    } else {
+      flush();
+    }
+  }
+  flush();
 }
 
 function drawLimitLine(ctx, chart, candles, data, tf, snap) {
