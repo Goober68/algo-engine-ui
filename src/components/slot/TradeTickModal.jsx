@@ -384,7 +384,7 @@ function ChartLegendPanel() {
           <LegendSwatch color="rgba(127,255,0,0.5)" small />
           <LegendSwatch color="rgba(127,255,0,0.5)" />
           <LegendSwatch color="rgba(127,255,0,0.5)" big />
-          <span className="text-muted ml-1">size = radius (log)</span>
+          <span className="text-muted ml-1">size = radius (sum at tick)</span>
         </LegendRow>
         <LegendRow>
           <span className="text-muted italic">prints hidden when window ≥ 30s</span>
@@ -716,10 +716,25 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     const spanSec = spanNs / 1e9;
     const zoomBoost = 2 * Math.log10(30 / Math.max(0.001, spanSec));
     const baseR = Math.max(1.5, Math.min(8, 2 + zoomBoost));
+    // Aggregate prints sharing the exact same (ts_ns, price, side)
+    // into a single bucket. A sweep against multiple resting orders
+    // emits one MBP1 T record per leg; without merging, 10 stacked
+    // 1-lot legs render as 10 overlapping mostly-opaque blobs that
+    // hide the cluster magnitude. Merging makes the dot radius
+    // reflect the real aggregate size at that tick. Side stays in
+    // the key -- B vs A at the same px/ts is informationally
+    // distinct (passive bid resting vs passive ask resting).
+    const buckets = new Map();
     for (const t of ticks) {
       if (t.kind !== 'trade') continue;
       if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
       if (t.price < pmin || t.price > pmax) continue;
+      const key = `${t.ts_ns}|${t.price}|${t.side}`;
+      const cur = buckets.get(key);
+      if (cur) cur.size += (t.size || 0);
+      else buckets.set(key, { ts_ns: t.ts_ns, price: t.price, side: t.side, size: (t.size || 0) });
+    }
+    for (const t of buckets.values()) {
       const cx = xT(t.ts_ns), cy = yP(t.price);
       const r = baseR + Math.min(2.5, Math.log2((t.size || 1) + 1) * 0.4);
       ctx.fillStyle = t.side === 'B' ? 'rgba(239,83,80,0.5)'
