@@ -444,21 +444,25 @@ function ModeRadio({ label, active, onClick }) {
   );
 }
 
-// IANA TZ picker. Renders as `<label>` (e.g. "NYC") with the underlying
-// IANA name (`America/New_York`) as the title attr + the selected
-// option value. Engine-side consumer must do `tzdata.gettz(tz_name)`
-// for DST-correct interpretation -- never assume EST/EDT from a
-// label string. List sourced from tv-broker-relay's marketSessions.js.
+// IANA TZ picker. Options render as "<desc> (<label>)" so the dropdown
+// is scannable -- "Hong Kong (HKG)" reads better than just "HKG".
+// Once selected the picker collapses to the human description so the
+// chosen value is still readable at a glance. Underlying value is the
+// IANA name (e.g. America/New_York); engine-side consumer must resolve
+// via tzdata for DST correctness -- never assume EST/EDT from a label
+// string. List sourced from tv-broker-relay's marketSessions.js.
 function TzSelect({ value, onChange }) {
+  const known = MARKET_SESSIONS.find(s => s.tz === value);
+  const title = known ? `${known.desc} -- ${value}` : value;
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      title={value}
-      className="px-1 h-5 bg-bg border border-border rounded text-text text-[11px] tnum"
+      title={title}
+      className="px-1 h-5 bg-bg border border-border rounded text-text text-[11px]"
     >
       {MARKET_SESSIONS.map(s => (
-        <option key={s.tz} value={s.tz}>{s.label}</option>
+        <option key={s.tz} value={s.tz}>{s.desc} ({s.label})</option>
       ))}
     </select>
   );
