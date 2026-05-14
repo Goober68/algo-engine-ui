@@ -8,6 +8,7 @@ import { fetchStrategySchema } from '../data/strategySchema';
 import { fetchSessionBars, getDefaults, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
 import SchemaSection from '../components/schema/SchemaSection';
 import ParamRow from '../components/schema/ParamRow';
+import { paramActive } from '../components/schema/schemaLabels';
 import ChartPane from '../components/slot/ChartPane';
 import Splitter from '../components/chrome/Splitter';
 import { usePersistedSize } from '../components/chrome/usePersistedSize';
@@ -257,14 +258,19 @@ function SliderPanel({ schema, values, onChange, width }) {
           badge={`${s.fields.length}`}
           defaultOpen={s.id !== 'lifecycle'}
         >
-          {s.fields.map(key => (
-            <ParamRow
-              key={key}
-              schemaField={{ ...schema.params[key], name: key }}
-              value={values[key]}
-              onChange={(v) => onChange(key, v)}
-            />
-          ))}
+          {s.fields.map(key => {
+            const def = { ...schema.params[key], name: key };
+            const active = paramActive(def, values);
+            return (
+              <ParamRow
+                key={key}
+                schemaField={def}
+                value={values[key]}
+                onChange={(v) => onChange(key, v)}
+                disabled={!active}
+              />
+            );
+          })}
         </SchemaSection>
       ))}
     </div>

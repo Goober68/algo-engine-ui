@@ -24,11 +24,14 @@ export default function ParamRow({ schemaField, value, onChange, disabled = fals
   // the readout because slider position alone is imprecise.
   const showValueCol = !(def.type === 'enum' || def.type === 'bool');
   return (
-    <div className="px-2 py-px border-b border-border/20 hover:bg-accent/[0.03]">
+    <div className={
+      'px-2 py-px border-b border-border/20 hover:bg-accent/[0.03] ' +
+      (disabled ? 'opacity-40' : '')
+    }>
       <div className="flex items-center gap-1.5">
         <span
           className="text-[11px] text-text truncate w-[108px] shrink-0"
-          title={paramHoverTitle(def)}
+          title={paramHoverTitle(def) + (disabled ? '\n\n(disabled by depends_on)' : '')}
         >
           {label}
         </span>
