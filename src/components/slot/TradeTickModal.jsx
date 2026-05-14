@@ -464,6 +464,19 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
   );
 }
 
+// X-axis time formatter for the tick chart. Default = HH:MM:SS;
+// fineGrain (= span < 3s) bumps to HH:MM:SS.mmm so adjacent labels
+// don't collide on the same wall-clock second.
+function fmtTickAxisTime(ns, fineGrain) {
+  const d = new Date(ns / 1e6);
+  const base = d.toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  if (!fineGrain) return base;
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${base}.${ms}`;
+}
+
 function fmtSpan(ns) {
   const sec = ns / 1e9;
   if (sec < 60) return `${sec.toFixed(1)}s`;
@@ -527,26 +540,35 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   const xT = (ts) => x0 + (x1 - x0) * (ts - fromNs) / (toNs - fromNs);
   const yP = (p)  => y1 - (y1 - y0) * (p - pmin) / (pmax - pmin);
 
-  // Y axis labels (3 levels)
+  // Y axis: tick-aligned labels at a "nice" step (smallest power-of-2
+  // multiple of TICK that yields <=6 labels across the range). Avoids
+  // junk values like 29676.91 -- MNQ price levels are always multiples
+  // of 0.25.
   ctx.fillStyle = '#7c8190';
   ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-  for (const frac of [0, 0.5, 1]) {
-    const p = pmin + (pmax - pmin) * (1 - frac);
-    const y = y0 + (y1 - y0) * frac;
+  let yStep = TICK;
+  while ((pmax - pmin) / yStep > 6) yStep *= 2;
+  const yStart = Math.ceil(pmin / yStep) * yStep;
+  for (let p = yStart; p <= pmax + 1e-9; p += yStep) {
+    const y = yP(p);
     ctx.fillText(p.toFixed(2), x0 - 4, y);
     ctx.strokeStyle = '#1a1d23';
     ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
   }
-  // X axis labels (3 timestamps)
+  // X axis labels (3 timestamps). Show ms when the visible span is
+  // tight enough that second-resolution labels would all read the
+  // same value (< 3s span = each label slot < 1s).
+  const spanSec = (toNs - fromNs) / 1e9;
+  const fineGrain = spanSec < 3;
+  ctx.fillStyle = '#7c8190';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
   for (const frac of [0, 0.5, 1]) {
     const ts = fromNs + (toNs - fromNs) * frac;
     const x = x0 + (x1 - x0) * frac;
-    const lbl = new Date(ts / 1e6).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-    ctx.fillText(lbl, x, y1 + 4);
+    ctx.fillText(fmtTickAxisTime(ts, fineGrain), x, y1 + 4);
   }
 
   // Bracket lines: render only when their price is already inside
