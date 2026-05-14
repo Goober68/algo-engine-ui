@@ -183,18 +183,25 @@ export default function TradeTickModal({ trade, algoTrade, decision, audit, onCl
           <button onClick={onClose} className="text-muted hover:text-text text-lg leading-none">×</button>
         </div>
 
-        {/* Summary 2-col */}
+        {/* Summary 2-col -- broker / algo entry+exit comparison up
+            front (left col = broker truth = what executed; right col
+            = algo-sim = what the runner thought it did). Slip / missed-
+            fills jump out at a glance. SL/TP/duration/profit follow. */}
         <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
-          <KV k="direction" v={trade.side.toUpperCase()} cls={isLong ? 'text-buy' : 'text-sell'} />
-          <KV k="size"      v={trade.qty} />
-          <KV k="entry"     v={trade.entry_px.toFixed(2)} />
-          <KV k="SL @ entry" v={slPx ? slPx.toFixed(2) : '—'} cls={slPx ? 'text-sl' : ''} />
-          <KV k="exit"      v={trade.exit_px?.toFixed(2) ?? '—'} />
-          <KV k="TP @ entry" v={tpPx ? tpPx.toFixed(2) : '—'} cls={tpPx ? 'text-tp' : ''} />
-          <KV k="reason"    v={decision?.reason || trade.reason || 'EXIT'} />
-          <KV k="duration"  v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
-          <KV k="profit"    v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
-          <KV k="comment"   v={trade.algo_id || ''} />
+          <KV k="direction"     v={trade.side.toUpperCase()} cls={isLong ? 'text-buy' : 'text-sell'} />
+          <KV k="size"          v={trade.qty} />
+          <KV k="broker entry"  v={fmtTimePx(trade.entry_ts, trade.entry_px)} />
+          <KV k="algo entry"    v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
+              cls={algoTrade ? '' : 'text-muted'} />
+          <KV k="broker exit"   v={fmtTimePx(trade.exit_ts, trade.exit_px)} />
+          <KV k="algo exit"     v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
+              cls={algoTrade ? '' : 'text-muted'} />
+          <KV k="SL @ entry"    v={slPx ? slPx.toFixed(2) : '—'} cls={slPx ? 'text-sl' : ''} />
+          <KV k="TP @ entry"    v={tpPx ? tpPx.toFixed(2) : '—'} cls={tpPx ? 'text-tp' : ''} />
+          <KV k="reason"        v={decision?.reason || trade.reason || 'EXIT'} />
+          <KV k="duration"      v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
+          <KV k="profit"        v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
+          <KV k="comment"       v={trade.algo_id || ''} />
         </div>
 
         {/* Webhook bracket (what was POSTed to the relay for this trade) */}
@@ -412,14 +419,12 @@ function drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs) {
   drawLine(ctx, ticks, xT, yP, 'ask', '#d4be7a');
 
   // Broker entry/exit (solid) — the ground truth for what executed.
+  // Entry/exit prices live in the header summary KV grid (broker entry,
+  // algo entry, broker exit, algo exit) so chart stays uncluttered.
   if (trade.entry_ts) {
     const ex = xT(trade.entry_ts);
     const ey = yP(trade.entry_px);
     drawArrow(ctx, ex, ey, trade.side === 'long' ? '#1976d2' : '#ffff00', 'right');
-    ctx.fillStyle = '#fff';
-    ctx.font = '10px ui-monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`ENTRY ${trade.entry_px.toFixed(2)}`, ex + 6, ey - 6);
   }
   if (trade.exit_ts && trade.exit_px) {
     const xx = xT(trade.exit_ts);
@@ -486,6 +491,18 @@ function KV({ k, v, cls = '' }) {
       <span className={`${cls} text-text font-semibold`}>{v}</span>
     </div>
   );
+}
+
+// Compact "HH:MM:SS @ price" cell for the broker/algo entry/exit
+// comparison. Returns the em-dash placeholder when either field is
+// missing -- happens for the algo column when no algo counterpart was
+// matched, and for either exit field on still-open positions.
+function fmtTimePx(ns, px) {
+  if (!ns || px == null) return '—';
+  const t = new Date(ns / 1e6).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  return `${t} @ ${px.toFixed(2)}`;
 }
 
 function fmtFullTime(ns) {
