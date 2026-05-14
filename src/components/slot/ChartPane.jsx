@@ -478,6 +478,19 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
         </div>
       )}
       <div ref={chartDivRef} className="absolute inset-0" />
+      {/* "Loading bars..." overlay. Shows when the bars fetch is
+          still pending (data exists but bars=[]). The slot view
+          renders quickly with the trades/broker quartet; bars
+          stream in 5-30s later (cold-cache DBN aggregation). This
+          indicator stops the chart from looking like it's just
+          frozen-blank during that window. */}
+      {data && (!data.bars || data.bars.length === 0) && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+          <div className="px-3 py-1.5 rounded bg-panel/90 border border-border text-[11px] text-muted">
+            loading bars from tick archive…
+          </div>
+        </div>
+      )}
       {/* z-index 10: lightweight-charts creates an internal stacking
           context with its own canvases. Without explicit z-index here
           the overlay can render BELOW the candle layer. (Same trick as
