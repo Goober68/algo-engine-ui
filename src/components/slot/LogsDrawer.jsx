@@ -1,12 +1,9 @@
-// Bottom drawer with two SIDE-BY-SIDE log panes (stdout left, stderr
-// right). No tab toggling — the operator wants both visible because
-// runner stdout (status/bar/relay heartbeats) and stderr (errors +
-// warnings) tell different parts of the story, often correlated in
-// time. Splitter between them so widths are tunable.
-//
-// The relay audit stream was a separate tab here briefly; folded into
-// the Trade Table (HTTP column + orders overlay). Env/config is queued
-// for the future gear/settings panel.
+// Bottom drawer with three SIDE-BY-SIDE panes:
+//   stdout (left) | stderr (middle) | relay-audit orders (right).
+// Runner stdout (status/bar/relay heartbeats), stderr (errors +
+// warnings), and the relay-audit POST stream tell different parts of
+// the same story and are often time-correlated; keeping all three
+// side-by-side beats tab-toggling.
 //
 // Line colorations lifted from runner/dashboard/static/dashboard.js +
 // dashboard.css so operator muscle memory from the old UI carries over.
@@ -16,17 +13,19 @@ import { useParams } from 'react-router-dom';
 import { useRunnerLogs } from '../../data/MockDataProvider';
 import { usePersistedSize } from '../chrome/usePersistedSize';
 import Splitter from '../chrome/Splitter';
+import OrdersPanel from './OrdersPanel';
 
 const COLLAPSED_PX = 28;
 const DEFAULT_OPEN_PX = 240;
 
-export default function LogsDrawer({ slotIdx, drawerPx, setDrawerPx }) {
+export default function LogsDrawer({ slotIdx, drawerPx, setDrawerPx, data, setSelectedTradeKey }) {
   const { id: runnerId } = useParams();
   const open = drawerPx > COLLAPSED_PX + 4;
   const toggleOpen = () => setDrawerPx(open ? COLLAPSED_PX : DEFAULT_OPEN_PX);
-  // Width of the left (stdout) pane within the drawer. Stderr takes
-  // the rest. Persisted across sessions.
-  const [stdoutPx, setStdoutPx] = usePersistedSize('logsdrawer.stdoutPx', 600);
+  // Pane widths within the drawer. stdout + audit are fixed; stderr
+  // takes the remainder. All persisted across sessions.
+  const [stdoutPx, setStdoutPx] = usePersistedSize('logsdrawer.stdoutPx', 480);
+  const [auditPx,  setAuditPx]  = usePersistedSize('logsdrawer.auditPx',  340);
   // Watch stderr passively even when the drawer is collapsed, so the
   // header badge can scream when something broke without requiring the
   // operator to open the drawer first.
@@ -52,7 +51,7 @@ export default function LogsDrawer({ slotIdx, drawerPx, setDrawerPx }) {
         </button>
         {open && (
           <span className="text-muted text-[10px]">
-            stdout · stderr (drag splitters to resize)
+            stdout · stderr · audit (drag splitters to resize)
           </span>
         )}
       </div>
@@ -66,6 +65,11 @@ export default function LogsDrawer({ slotIdx, drawerPx, setDrawerPx }) {
           <div className="flex flex-col flex-1 min-w-0">
             <PaneHeader label="stderr" />
             <ProcessLogPane runnerId={runnerId} kind="stderr" />
+          </div>
+          <Splitter dir="col" size={auditPx} setSize={setAuditPx} min={200} max={1200} invert />
+          <div className="flex flex-col min-w-0" style={{ width: auditPx }}>
+            <PaneHeader label="relay audit" />
+            <OrdersPanel data={data} setSelectedTradeKey={setSelectedTradeKey} />
           </div>
         </div>
       )}

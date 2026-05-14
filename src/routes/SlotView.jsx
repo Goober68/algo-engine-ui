@@ -5,7 +5,6 @@ import SlotHeader from '../components/slot/SlotHeader';
 import ChartPane from '../components/slot/ChartPane';
 import EquityMini from '../components/slot/EquityMini';
 import TradeTable from '../components/slot/TradeTable';
-import OrdersPanel from '../components/slot/OrdersPanel';
 import LogsDrawer from '../components/slot/LogsDrawer';
 // StrategyStatePanel temporarily removed from the UI (per user 2026-05-12)
 // — the chart's per-bar gate hover tooltip subsumes its main purpose.
@@ -25,7 +24,6 @@ export default function SlotView() {
   const [filter, setFilter]                       = useState('all');
   const [selectedTradeKey, setSelectedTradeKey]   = useState(null);
   const [modalTradeKey, setModalTradeKey]         = useState(null);
-  const [railTab, setRailTab]                     = useState('trades'); // 'trades' | 'orders'
 
   // Persisted view state. tf and panel sizes survive slot/runner switches
   // + page reloads. selectedTradeKey is intentionally per-session.
@@ -60,29 +58,14 @@ export default function SlotView() {
             Trades flex-grow so they get the bulk of vertical space
             and so auto-scroll-to-latest stays meaningful. */}
         <div className="flex flex-col min-h-0 bg-panel2" style={{ width: railPx }}>
-          <div className="flex border-b border-border bg-bg">
-            <RailTab label="Trades" active={railTab === 'trades'}
-                     onClick={() => setRailTab('trades')}
-                     count={(data?.trades?.length || 0) + (data?.broker?.length || 0)} />
-            <RailTab label="Orders" active={railTab === 'orders'}
-                     onClick={() => setRailTab('orders')}
-                     count={data?.audit?.length || 0} />
-          </div>
           <div className="flex-1 min-h-0 bg-panel">
-            {railTab === 'trades' ? (
-              <TradeTable
-                data={data}
-                filter={filter}
-                setFilter={setFilter}
-                selectedTradeKey={selectedTradeKey}
-                setSelectedTradeKey={(k) => { setSelectedTradeKey(k); setModalTradeKey(k); }}
-              />
-            ) : (
-              <OrdersPanel
-                data={data}
-                setSelectedTradeKey={(k) => { setSelectedTradeKey(k); setModalTradeKey(k); }}
-              />
-            )}
+            <TradeTable
+              data={data}
+              filter={filter}
+              setFilter={setFilter}
+              selectedTradeKey={selectedTradeKey}
+              setSelectedTradeKey={(k) => { setSelectedTradeKey(k); setModalTradeKey(k); }}
+            />
           </div>
           <Splitter dir="row" size={equityPx} setSize={setEquityPx} min={48} max={400} invert />
           <div className="bg-panel" style={{ height: equityPx }}>
@@ -97,7 +80,13 @@ export default function SlotView() {
       </div>
       <Splitter dir="row" size={drawerPx} setSize={setDrawerPx} min={28} max={500} invert />
       <div style={{ height: drawerPx }}>
-        <LogsDrawer slotIdx={slotIdx} drawerPx={drawerPx} setDrawerPx={setDrawerPx} />
+        <LogsDrawer
+          slotIdx={slotIdx}
+          drawerPx={drawerPx}
+          setDrawerPx={setDrawerPx}
+          data={data}
+          setSelectedTradeKey={(k) => { setSelectedTradeKey(k); setModalTradeKey(k); }}
+        />
       </div>
       {modalTradeKey != null && (
         <TickModalWrapper
@@ -161,27 +150,6 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
       onPrev={prev != null ? () => onJump(prev) : null}
       onNext={next != null ? () => onJump(next) : null}
     />
-  );
-}
-
-function RailTab({ label, active, onClick, count }) {
-  return (
-    <button
-      onClick={onClick}
-      className={
-        'flex-1 px-3 py-1.5 text-[11px] font-semibold border-b-2 transition-colors ' +
-        (active
-          ? 'text-text border-accent bg-panel'
-          : 'text-muted border-transparent hover:text-text hover:bg-panel/50')
-      }
-    >
-      {label}
-      {count != null && count > 0 && (
-        <span className={'ml-1.5 text-[10px] tnum ' + (active ? 'text-muted' : 'text-muted/60')}>
-          {count}
-        </span>
-      )}
-    </button>
   );
 }
 
