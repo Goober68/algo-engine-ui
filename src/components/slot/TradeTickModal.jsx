@@ -342,17 +342,68 @@ function WebhookPanel({ audit, trade }) {
 function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
+  // Zoom/pan window. Defaults to the full [fromNs, toNs] passed in;
+  // mouse wheel zooms around the cursor x, drag pans. Y-range is
+  // recomputed inside the visible window each draw so zoom auto-
+  // rescales price (essential for studying tick-scale FillModel
+  // behavior at e.g. trail-trigger moments).
+  const [view, setView] = useState({ from: fromNs, to: toNs });
+  // Reset zoom whenever the source window changes (i.e. user navigated
+  // to a different trade).
+  useEffect(() => { setView({ from: fromNs, to: toNs }); }, [fromNs, toNs]);
+
+  // Drag-to-pan state. Refs not state -- mid-drag should not re-render.
+  const dragRef = useRef(null);
 
   useEffect(() => {
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
     if (!wrap || !cv) return;
-    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs);
+    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, view.from, view.to);
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs]);
+  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, view]);
+
+  const onWheel = (e) => {
+    e.preventDefault();
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const rect = cv.getBoundingClientRect();
+    const fracX = (e.clientX - rect.left) / rect.width;       // 0..1
+    const span = view.to - view.from;
+    // deltaY > 0 (scroll down) = zoom out; < 0 = zoom in. 1.15 ratio
+    // per wheel-tick reads as a smooth, predictable zoom.
+    const factor = e.deltaY > 0 ? 1.15 : 1 / 1.15;
+    const newSpan = Math.max(1_000_000_000, span * factor);   // 1s minimum
+    const pivot = view.from + span * fracX;
+    setView({
+      from: Math.round(pivot - newSpan * fracX),
+      to:   Math.round(pivot + newSpan * (1 - fracX)),
+    });
+  };
+  const onMouseDown = (e) => {
+    if (e.button !== 0) return;   // left-button only
+    dragRef.current = { x: e.clientX, from: view.from, to: view.to };
+  };
+  const onMouseMove = (e) => {
+    if (!dragRef.current) return;
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const rect = cv.getBoundingClientRect();
+    const span = dragRef.current.to - dragRef.current.from;
+    const dxFrac = (e.clientX - dragRef.current.x) / rect.width;
+    const shift = -span * dxFrac;
+    setView({
+      from: Math.round(dragRef.current.from + shift),
+      to:   Math.round(dragRef.current.to   + shift),
+    });
+  };
+  const onMouseUp   = () => { dragRef.current = null; };
+  const onMouseLeave = () => { dragRef.current = null; };
+  const reset = () => setView({ from: fromNs, to: toNs });
+  const zoomed = view.from !== fromNs || view.to !== toNs;
 
   // Per prime directive: surface where the ticks actually came from.
   // Live ring vs disk archive is meaningful for "is this what the
@@ -367,7 +418,16 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
 
   return (
     <div ref={wrapRef} className="relative w-full h-72 bg-bg rounded">
-      <canvas ref={canvasRef} className="w-full h-full" />
+      <canvas
+        ref={canvasRef}
+        className="w-full h-full"
+        style={{ cursor: dragRef.current ? 'grabbing' : 'grab' }}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseLeave}
+      />
       {ticks === null && (
         <div className="absolute inset-0 flex items-center justify-center text-muted text-xs">
           loading ticks…
@@ -386,12 +446,29 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
         </div>
       )}
       {ticks && ticks.length > 0 && sourceLabel && (
-        <div className="absolute top-1 right-2 text-[10px] text-muted tnum">
-          {ticks.length.toLocaleString()} ticks · source: {sourceLabel}
+        <div className="absolute top-1 right-2 flex items-center gap-2 text-[10px] tnum">
+          {zoomed && (
+            <button onClick={reset}
+                    className="px-1.5 py-0 rounded border border-accent/40 text-accent bg-accent/10 hover:bg-accent/20"
+                    title="Reset zoom">
+              RESET
+            </button>
+          )}
+          <span className="text-muted">
+            {ticks.length.toLocaleString()} ticks · source: {sourceLabel}
+            {zoomed && ` · ${fmtSpan(view.to - view.from)}`}
+          </span>
         </div>
       )}
     </div>
   );
+}
+
+function fmtSpan(ns) {
+  const sec = ns / 1e9;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  if (sec < 3600) return `${(sec / 60).toFixed(1)}min`;
+  return `${(sec / 3600).toFixed(1)}h`;
 }
 
 function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs) {
@@ -413,12 +490,26 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   const y0 = PAD.top,  y1 = cssH - PAD.bottom;
 
   // Y range: include all bid/ask + entry + exit + SL.
+  // Recompute y-range from ticks WITHIN the visible window so zoom
+  // auto-rescales price. (Static range over all data was useless when
+  // zooming in on a 1s span -- price collapsed into a sliver.)
   let pmin = Infinity, pmax = -Infinity;
   for (const t of ticks) {
+    if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
     if (t.bid < pmin) pmin = t.bid;
     if (t.bid > pmax) pmax = t.bid;
     if (t.ask < pmin) pmin = t.ask;
     if (t.ask > pmax) pmax = t.ask;
+  }
+  // Fallback: zoomed-in window may have zero ticks (sparse periods);
+  // use the un-windowed range so the chart still renders something.
+  if (!Number.isFinite(pmin)) {
+    for (const t of ticks) {
+      if (t.bid < pmin) pmin = t.bid;
+      if (t.bid > pmax) pmax = t.bid;
+      if (t.ask < pmin) pmin = t.ask;
+      if (t.ask > pmax) pmax = t.ask;
+    }
   }
   if (brokerTrade?.entry_px) { pmin = Math.min(pmin, brokerTrade.entry_px); pmax = Math.max(pmax, brokerTrade.entry_px); }
   if (brokerTrade?.exit_px)  { pmin = Math.min(pmin, brokerTrade.exit_px);  pmax = Math.max(pmax, brokerTrade.exit_px); }
