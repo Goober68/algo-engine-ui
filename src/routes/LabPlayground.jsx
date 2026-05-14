@@ -166,22 +166,20 @@ export default function LabPlayground() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <Toolbar wsStatus={wsStatus} runWallMs={runWallMs} runError={runError} onRun={triggerRun}
-               schema={schema} values={values}
-               onLoadConfig={(cfg) => {
-                 // Replace values with the saved config's, then re-RUN.
-                 const next = { ...values, ...(cfg.values || {}) };
-                 setValues(next);
-                 writeAutosave(next);
-                 if (debounceRef.current) clearTimeout(debounceRef.current);
-                 debounceRef.current = setTimeout(triggerRun, RUN_DEBOUNCE_MS);
-               }} />
+      <Toolbar wsStatus={wsStatus} runWallMs={runWallMs} runError={runError} onRun={triggerRun} />
       <div className="flex-1 min-h-0 flex">
         <SliderPanel
           schema={schema}
           values={values}
           onChange={onSliderChange}
           width={sliderWidth}
+          onLoadConfig={(cfg) => {
+            const next = { ...values, ...(cfg.values || {}) };
+            setValues(next);
+            writeAutosave(next);
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = setTimeout(triggerRun, RUN_DEBOUNCE_MS);
+          }}
         />
         <Splitter dir="col" size={sliderWidth} setSize={setSliderWidth}
                   min={220} max={600} />
@@ -216,8 +214,8 @@ export default function LabPlayground() {
 // reference screenshot and is a typical futures-account size.
 const STARTING_BAL = 50_000;
 
-// ── Toolbar (session status + saved-configs + manual Run + timing) ──
-function Toolbar({ wsStatus, runWallMs, runError, onRun, schema, values, onLoadConfig }) {
+// ── Toolbar (session status + manual Run + timing) ──
+function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
   const statusCls = wsStatus === 'ready'
     ? 'bg-long/20 text-long border-long/40'
     : wsStatus === 'connecting'
@@ -245,9 +243,6 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun, schema, values, onLoadC
         {runWallMs != null && (
           <span className="text-muted text-[11px] tnum">last {runWallMs.toFixed(0)} ms</span>
         )}
-        {schema && values && (
-          <SavedConfigs strategy={STRATEGY} currentValues={values} onLoad={onLoadConfig} />
-        )}
         <button
           onClick={onRun}
           disabled={wsStatus !== 'ready'}
@@ -265,11 +260,18 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun, schema, values, onLoadC
 // cap, so the sidebar now surfaces every sweepable param grouped by
 // schema section (instead of just the playground_fields[] subset).
 // Each row's value lives in the values dict keyed by the param name.
-function SliderPanel({ schema, values, onChange, width }) {
+function SliderPanel({ schema, values, onChange, width, onLoadConfig }) {
   const sections = useMemo(() => groupSweepableBySection(schema), [schema]);
   return (
     <div style={{ width }}
          className="shrink-0 min-h-0 overflow-y-auto bg-panel">
+      {/* Saved-configs header sits above the first section -- the
+          load/save controls deserve top billing, not toolbar-corner real
+          estate. */}
+      <div className="px-2 py-1.5 border-b border-border bg-bg/30 flex items-center gap-2">
+        <span className="text-[10px] uppercase tracking-wide text-muted shrink-0">configs</span>
+        <SavedConfigs strategy={STRATEGY} currentValues={values} onLoad={onLoadConfig} />
+      </div>
       {sections.map(s => (
         <SchemaSection
           key={s.id}
