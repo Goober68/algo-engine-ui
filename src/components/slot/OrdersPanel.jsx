@@ -9,35 +9,47 @@
 // Mirrors stdout/stderr panes' visual density on purpose -- this is
 // the third member of the bottom-drawer trio.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { PaneHeader } from './LogsDrawer';
 
 const MATCH_AHEAD_NS  = 5 * 60 * 1_000_000_000;   // 5 min forward
 const MATCH_BEHIND_NS = 30 * 1_000_000_000;       // 30s backward
 
 export default function OrdersPanel({ data, setSelectedTradeKey }) {
   const rows = useMemo(() => buildRows(data), [data]);
+  const ref = useRef(null);
+  const [tail, setTail] = useState(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !tail) return;
+    el.scrollTop = el.scrollHeight;
+  }, [rows, tail]);
   return (
-    <div className="flex-1 overflow-y-auto p-2 text-[11px] font-mono text-muted leading-tight">
-      {!rows.length && (
-        <span className="italic text-muted">no relay POSTs yet</span>
-      )}
-      {rows.map(r => (
-        <button
-          key={r.key}
-          onClick={() => r.matchedKey != null && setSelectedTradeKey(r.matchedKey)}
-          disabled={r.matchedKey == null}
-          title={r.full}
-          className={
-            'flex items-baseline gap-2 w-full text-left ' +
-            'hover:bg-accent/[0.04] disabled:cursor-default'
-          }
-        >
-          <span className="text-muted shrink-0">{fmtTime(r.ts_ns)}</span>
-          <StatusChip status={r.status} />
-          <span className={'truncate flex-1 ' + r.cls}>{r.line}</span>
-        </button>
-      ))}
-    </div>
+    <>
+      <PaneHeader label="relay audit" tail={tail} setTail={setTail} />
+      <div ref={ref}
+           className="flex-1 overflow-y-auto overflow-x-hidden p-2 text-[11px] font-mono text-muted leading-tight">
+        {!rows.length && (
+          <span className="italic text-muted">no relay POSTs yet</span>
+        )}
+        {rows.map(r => (
+          <button
+            key={r.key}
+            onClick={() => r.matchedKey != null && setSelectedTradeKey(r.matchedKey)}
+            disabled={r.matchedKey == null}
+            title={r.full}
+            className={
+              'flex items-baseline gap-2 w-full text-left ' +
+              'hover:bg-accent/[0.04] disabled:cursor-default'
+            }
+          >
+            <span className="text-muted shrink-0">{fmtTime(r.ts_ns)}</span>
+            <StatusChip status={r.status} />
+            <span className={'truncate flex-1 ' + r.cls}>{r.line}</span>
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -54,7 +66,10 @@ function StatusChip({ status }) {
 }
 
 function buildRows(data) {
-  const audits  = (data?.audit  || []).slice().sort((a, b) => b.ts_ns - a.ts_ns); // newest first
+  // Oldest first so the panel reads top-to-bottom in time order --
+  // matches stdout/stderr conventions (newest at the bottom). TAIL
+  // toggle then auto-scrolls to bottom = following live data.
+  const audits  = (data?.audit  || []).slice().sort((a, b) => a.ts_ns - b.ts_ns);
   const brokers = (data?.broker || []).slice().sort((a, b) => a.entry_ts - b.entry_ts);
   const taken   = new Set();
   return audits.map(a => {
