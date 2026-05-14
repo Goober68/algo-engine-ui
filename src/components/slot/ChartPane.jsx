@@ -409,10 +409,10 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
 
   return (
     <div ref={wrapRef} className="relative w-full h-full">
-      {/* TF picker + fit button — bottom-left, just above the time
-          gutter, mirroring the TradingView toolbar layout. `left-10`
-          clears the lightweight-charts "TV" watermark logo. */}
-      <div className="absolute bottom-7 left-10 z-20 flex gap-1 text-[11px]">
+      {/* TF picker + fit button — top-left so it clears both the
+          time-gutter axis labels and the lightweight-charts "TV"
+          watermark logo at the bottom-left of the candle area. */}
+      <div className="absolute top-2 left-2 z-20 flex gap-1 text-[11px]">
         {TF_OPTIONS.map(o => (
           <button
             key={o.sec}
