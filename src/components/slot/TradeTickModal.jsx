@@ -464,17 +464,24 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
   );
 }
 
-// X-axis time formatter for the tick chart. Default = HH:MM:SS;
-// fineGrain (= span < 3s) bumps to HH:MM:SS.mmm so adjacent labels
-// don't collide on the same wall-clock second.
-function fmtTickAxisTime(ns, fineGrain) {
+// X-axis time formatter for the tick chart. At second-or-coarser
+// step, full HH:MM:SS. At sub-second step ("subSec"), labels spill:
+// ms-aligned slots show `.NNN` (where in the current second we are);
+// second boundaries show `:NN` (which second we just rolled into).
+// So a 100ms-step axis reads:
+//   .100 .200 .300 .400 .500 .600 .700 .800 .900 :58 .100 .200 ...
+function fmtTickAxisTime(ns, subSec) {
   const d = new Date(ns / 1e6);
-  const base = d.toLocaleTimeString([], {
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  });
-  if (!fineGrain) return base;
-  const ms = String(d.getMilliseconds()).padStart(3, '0');
-  return `${base}.${ms}`;
+  if (!subSec) {
+    return d.toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+  }
+  const ms = d.getMilliseconds();
+  if (ms === 0) {
+    return `:${String(d.getSeconds()).padStart(2, '0')}`;
+  }
+  return `.${String(ms).padStart(3, '0')}`;
 }
 
 function fmtSpan(ns) {
@@ -557,18 +564,37 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     ctx.strokeStyle = '#1a1d23';
     ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
   }
-  // X axis labels (3 timestamps). Show ms when the visible span is
-  // tight enough that second-resolution labels would all read the
-  // same value (< 3s span = each label slot < 1s).
-  const spanSec = (toNs - fromNs) / 1e9;
-  const fineGrain = spanSec < 3;
+  // X axis: nice-step labels with vertical grid lines (matches y).
+  // Step picked from a fixed series so labels land on round
+  // 10ms/100ms/1s/etc boundaries -- aim ~6-10 labels across the
+  // visible window. Labels "spill" between formats: at sub-second
+  // step, ms-aligned slots show `.NNN`, second boundaries show
+  // `:NN` so the operator can see "where am I within the second"
+  // and "when did the second roll over" without doing math.
+  const spanNs = toNs - fromNs;
+  const targetN = 8;
+  const NICE_STEPS_NS = [
+    10_000_000, 20_000_000, 50_000_000,             // 10/20/50ms
+    100_000_000, 200_000_000, 500_000_000,          // 100/200/500ms
+    1_000_000_000, 2_000_000_000, 5_000_000_000,    // 1/2/5s
+    10_000_000_000, 15_000_000_000, 30_000_000_000, // 10/15/30s
+    60_000_000_000, 120_000_000_000, 300_000_000_000,   // 1/2/5min
+    600_000_000_000, 1800_000_000_000, 3600_000_000_000, // 10/30/60min
+  ];
+  let xStep = NICE_STEPS_NS[NICE_STEPS_NS.length - 1];
+  for (const s of NICE_STEPS_NS) {
+    if (spanNs / s <= targetN) { xStep = s; break; }
+  }
+  const subSec = xStep < 1_000_000_000;
+  const xStart = Math.ceil(fromNs / xStep) * xStep;
   ctx.fillStyle = '#7c8190';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  for (const frac of [0, 0.5, 1]) {
-    const ts = fromNs + (toNs - fromNs) * frac;
-    const x = x0 + (x1 - x0) * frac;
-    ctx.fillText(fmtTickAxisTime(ts, fineGrain), x, y1 + 4);
+  for (let ts = xStart; ts <= toNs; ts += xStep) {
+    const x = x0 + (x1 - x0) * (ts - fromNs) / spanNs;
+    ctx.strokeStyle = '#1a1d23';
+    ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
+    ctx.fillText(fmtTickAxisTime(ts, subSec), x, y1 + 4);
   }
 
   // Bracket lines: render only when their price is already inside
