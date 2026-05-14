@@ -15,7 +15,7 @@ export const MARKET_SESSIONS = [
   { label: 'HKG', tz: 'Asia/Hong_Kong',       desc: 'Hong Kong' },
   { label: 'FRA', tz: 'Europe/Berlin',        desc: 'Frankfurt' },
   { label: 'LON', tz: 'Europe/London',        desc: 'London' },
-  { label: 'NYC', tz: 'America/New_York',     desc: 'New York' },
+  { label: 'NYSE', tz: 'America/New_York',    desc: 'New York' },
   { label: 'CME', tz: 'America/Chicago',      desc: 'CME Chicago' },
 ];
 
