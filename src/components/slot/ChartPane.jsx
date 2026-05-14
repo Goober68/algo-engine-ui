@@ -477,18 +477,22 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
       <canvas ref={overlayRef} className="absolute inset-0 pointer-events-none" style={{ zIndex: 10 }} />
       {gateHover && <GateHoverTip {...gateHover} wrapRef={wrapRef} />}
       {/* Bottom-center reset button. Restores the chart to its natural
-          default: time axis fitContent (shows all data, including the
-          live edge), Y axis auto-scale re-engaged (the price axis
-          stays locked once the user drags it -- have to flip
-          autoScale back on explicitly). */}
+          default: candle width back to lightweight-charts' default
+          barSpacing (6px), scrolled to the live edge, Y auto-scale
+          re-engaged. fitContent would squeeze candles to single
+          pixels when there's a lot of data -- the user wants the
+          natural readable candle width back, not max compression.
+          autoScale on the price axis stays locked once the user
+          drags it; have to flip it back on explicitly. */}
       <button
         onClick={() => {
           const c = chartRef.current;
           if (!c) return;
-          c.timeScale().fitContent();
+          c.timeScale().applyOptions({ barSpacing: 6 });
+          c.timeScale().scrollToRealTime();
           c.priceScale('right').applyOptions({ autoScale: true });
         }}
-        title="Reset view: fit all data + auto-scale Y"
+        title="Reset view: default candle width + scroll to live + auto-scale Y"
         className="absolute bottom-7 left-1/2 -translate-x-1/2 z-20 w-7 h-7 rounded-full bg-panel/90 border border-border text-muted hover:text-text hover:border-accent flex items-center justify-center"
       >
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
