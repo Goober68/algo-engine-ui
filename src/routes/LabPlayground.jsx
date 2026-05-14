@@ -5,14 +5,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchStrategySchema } from '../data/strategySchema';
-import { fetchSessionBars, getDefaults, getHello, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
+import { fetchSessionBars, getDefaults, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
 import SchemaSection from '../components/schema/SchemaSection';
 import ParamRow from '../components/schema/ParamRow';
 import ChartPane from '../components/slot/ChartPane';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
-const LS_AUTOSAVE = 'playground.autosave.v1';
+// Bumped to v2 when the values shape switched from positional array
+// to {key: value} dict (engine 19db867 unblock). Old v1 entries are
+// ignored on first read and replaced on next write.
+const LS_AUTOSAVE = 'playground.autosave.v2';
 
 export default function LabPlayground() {
   const [schema, setSchema]       = useState(null);
@@ -34,11 +37,18 @@ export default function LabPlayground() {
       .then(s => {
         if (cancelled) return;
         setSchema(s);
-        // Seed values from autosave-or-defaults.
-        const order = (s.playground_fields?.fields) || [];
-        const fromAutosave = readAutosave(order);
-        const defaults = order.map(k => s.params[k]?.default ?? 0);
-        setValues(fromAutosave || defaults);
+        // Seed values dict from autosave-or-defaults. Engine 19db867's
+        // JSON-keyed RUN means the wire format isn't capped at 12
+        // positional fields; we now hold every sweepable param as a
+        // {key: value} pair and send the whole dict on each RUN.
+        const sweepable = sweepableKeys(s);
+        const fromAutosave = readAutosave();
+        const defaults = Object.fromEntries(
+          sweepable.map(k => [k, s.params[k]?.default ?? 0])
+        );
+        setValues(fromAutosave
+          ? { ...defaults, ...fromAutosave }    // autosave overlays defaults
+          : defaults);
       })
       .catch(e => { if (!cancelled) setSchemaErr(e.message || String(e)); });
     return () => { cancelled = true; };
@@ -77,27 +87,15 @@ export default function LabPlayground() {
     return () => { cancelled = true; };
   }, [wsStatus]);
 
-  // When the server sends its hello (with relay-mandated default_params),
-  // adopt them if our seed differs (keeps slider order in sync with what
-  // the relay expects positionally).
-  useEffect(() => {
+  const onSliderChange = useCallback((key, raw) => {
     if (!schema) return;
-    const order = schema.playground_fields?.fields || [];
-    const h = getHello();
-    if (!h?.default_params || h.default_params.length !== order.length) return;
-    // Only override on first connect if we have no autosave.
-    if (readAutosave(order)) return;
-    setValues(h.default_params.slice());
-  }, [schema, wsStatus]);
-
-  const onSliderChange = useCallback((idx, raw) => {
-    if (!schema) return;
-    const order = schema.playground_fields.fields;
-    const def = schema.params[order[idx]];
-    const v = (def.type === 'int') ? parseInt(raw, 10) : parseFloat(raw);
+    const def = schema.params[key];
+    if (!def) return;
+    const v = (def.type === 'int') ? parseInt(raw, 10)
+            : (def.type === 'float') ? parseFloat(raw)
+            : raw;
     setValues(prev => {
-      const next = prev.slice();
-      next[idx] = v;
+      const next = { ...prev, [key]: v };
       writeAutosave(next);
       return next;
     });
@@ -111,6 +109,8 @@ export default function LabPlayground() {
     setRunError(null);
     const t0 = performance.now();
     try {
+      // JSON-keyed RUN: send the whole values dict; engine merges over
+      // the .set baseline. Empty dict = pure baseline.
       const result = await sendRun(values);
       const elapsed = performance.now() - t0;
       setStats(result.stats || null);
@@ -141,15 +141,12 @@ export default function LabPlayground() {
     );
   }
 
-  const order = schema.playground_fields?.fields || [];
-
   return (
     <div className="flex-1 min-h-0 flex flex-col">
       <Toolbar wsStatus={wsStatus} runWallMs={runWallMs} runError={runError} onRun={triggerRun} />
       <div className="flex-1 min-h-0 flex">
         <SliderPanel
           schema={schema}
-          fields={order}
           values={values}
           onChange={onSliderChange}
         />
@@ -217,23 +214,13 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
   );
 }
 
-// ── Slider sidebar — schema-driven, grouped by schema.sections ──────
-// Renders one SchemaSection per section that contains at least one
-// field present in `fields` (the playground_fields whitelist). Inside
-// each section, rows are kept in the schema's row/col order so the
-// layout matches what the future config editor / sweep UI will show.
-function SliderPanel({ schema, fields, values, onChange }) {
-  const sections = useMemo(
-    () => groupFieldsBySection(schema, fields),
-    [schema, fields]
-  );
-  // Index lookup so onChange can map field-name → its slot in `values`.
-  const idxOf = useMemo(() => {
-    const m = new Map();
-    fields.forEach((k, i) => m.set(k, i));
-    return m;
-  }, [fields]);
-
+// ── Slider sidebar — schema-driven, all sweepable params ────────────
+// Engine 19db867's JSON-keyed RUN dropped the 12-field positional
+// cap, so the sidebar now surfaces every sweepable param grouped by
+// schema section (instead of just the playground_fields[] subset).
+// Each row's value lives in the values dict keyed by the param name.
+function SliderPanel({ schema, values, onChange }) {
+  const sections = useMemo(() => groupSweepableBySection(schema), [schema]);
   return (
     <div className="w-[300px] min-h-0 overflow-y-auto border-r border-border bg-panel">
       {sections.map(s => (
@@ -242,14 +229,14 @@ function SliderPanel({ schema, fields, values, onChange }) {
           id={`playground.${s.id}`}
           title={s.title}
           badge={`${s.fields.length}`}
-          defaultOpen={true}
+          defaultOpen={s.id !== 'lifecycle'}
         >
           {s.fields.map(key => (
             <ParamRow
               key={key}
               schemaField={{ ...schema.params[key], name: key }}
-              value={values[idxOf.get(key)]}
-              onChange={(v) => onChange(idxOf.get(key), v)}
+              value={values[key]}
+              onChange={(v) => onChange(key, v)}
             />
           ))}
         </SchemaSection>
@@ -258,42 +245,36 @@ function SliderPanel({ schema, fields, values, onChange }) {
   );
 }
 
-// Bucket each `fields` entry into the section it appears in (per
-// schema.sections[].rows[].cols[]). Fields not found in any section
-// fall into a synthetic "Other" group at the end. Sections are
-// returned in schema.sections order; sweep_weight isn't used in the
-// playground, but the sweep UI will sort by it.
-function groupFieldsBySection(schema, fields) {
-  const fieldSet = new Set(fields);
-  const sectionOf = new Map();      // field key → section id
-  const sectionTitle = new Map();   // section id → title
-  for (const sec of (schema?.sections || [])) {
-    sectionTitle.set(sec.id, sec.title);
+// Walk schema.sections, keeping only sweepable params (engine-claude
+// marks tunable fields with sweepable: true; everything else is
+// deployment-side). Preserves the schema's row/col order within each
+// section so the layout matches the sweep UI.
+function groupSweepableBySection(schema) {
+  if (!schema) return [];
+  const out = [];
+  for (const sec of (schema.sections || [])) {
+    const fields = [];
     for (const row of (sec.rows || [])) {
       for (const col of (row.cols || [])) {
-        if (col.key) sectionOf.set(col.key, sec.id);
+        const key = col.key;
+        if (!key) continue;
+        const def = schema.params[key];
+        if (def?.sweepable) fields.push(key);
       }
     }
-  }
-  // Preserve playground_fields order within each section.
-  const buckets = new Map();
-  for (const key of fields) {
-    const sid = sectionOf.get(key) || '_other';
-    if (!buckets.has(sid)) buckets.set(sid, []);
-    buckets.get(sid).push(key);
-  }
-  // Emit in schema-section order (so the visual order matches what
-  // engine-claude defined in the JSON), with "_other" last.
-  const out = [];
-  for (const sec of (schema?.sections || [])) {
-    if (buckets.has(sec.id)) {
-      out.push({ id: sec.id, title: sec.title, fields: buckets.get(sec.id) });
+    if (fields.length) {
+      out.push({ id: sec.id, title: sec.title, fields });
     }
   }
-  if (buckets.has('_other')) {
-    out.push({ id: '_other', title: 'Other', fields: buckets.get('_other') });
-  }
   return out;
+}
+
+// Flat list of all sweepable param names — used to seed the values
+// dict on first load.
+function sweepableKeys(schema) {
+  return Object.entries(schema?.params || {})
+    .filter(([_, d]) => d.sweepable)
+    .map(([k]) => k);
 }
 
 // Single-pass walk over trades that produces every stat the KPI strip
@@ -628,13 +609,12 @@ function fmtT(sec) {
 }
 
 // ── Autosave (slider values, localStorage) ─────────────────────────
-function readAutosave(order) {
+function readAutosave() {
   try {
     const raw = window.localStorage.getItem(LS_AUTOSAVE);
     if (!raw) return null;
-    const arr = JSON.parse(raw);
-    if (!Array.isArray(arr) || arr.length !== order.length) return null;
-    return arr;
+    const obj = JSON.parse(raw);
+    return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null;
   } catch { return null; }
 }
 function writeAutosave(values) {
