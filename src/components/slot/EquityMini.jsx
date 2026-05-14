@@ -54,34 +54,31 @@ export default function EquityMini({ data }) {
 // exit OR broker fill) contributes a step at its exit timestamp.
 // Both series share the merged time axis so they line up visually.
 //
-// Cumulative PnL is rebased to the window start — i.e. trades that
-// closed before the 24h cutoff still count toward the curve's starting
-// y-value, so the operator sees "where the equity is RIGHT NOW vs
-// where it was 24h ago", not "PnL since this morning only".
+// Both curves anchored at $0 at the window's left edge, regardless of
+// pre-window cumulative P&L. The point of viewing them together is to
+// see "how is sim doing vs broker SINCE THE WINDOW OPENED" -- absolute
+// histories carried in from before would put the two on opposite sides
+// of the y-axis and make the delta unreadable. The header readout
+// shows the window-relative final value to match the curve.
 function buildEquity({ trades = [], broker = [] }) {
   const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
   const events = [];
-  let simBase = 0, brBase = 0;
   for (const t of trades) {
     if (t.pnl == null || !t.exit_ts) continue;
     const ms = t.exit_ts / 1e6;
-    if (ms < cutoffMs) { simBase += t.pnl; continue; }
+    if (ms < cutoffMs) continue;
     events.push({ ts: ms, kind: 'sim', pnl: t.pnl });
   }
   for (const b of broker) {
     if (b.pnl == null || !b.exit_ts) continue;
     const ms = b.exit_ts / 1e6;
-    if (ms < cutoffMs) { brBase += b.pnl; continue; }
+    if (ms < cutoffMs) continue;
     events.push({ ts: ms, kind: 'broker', pnl: b.pnl });
   }
   events.sort((a, b) => a.ts - b.ts);
 
-  let simEq = simBase, brEq = brBase;
-  const out = [];
-  // Seed point at the window's left edge so the curve doesn't appear
-  // to start at $0 — anchors at the running total carried in from
-  // pre-window history.
-  out.push({ ts: cutoffMs, sim: simEq, broker: brEq });
+  let simEq = 0, brEq = 0;
+  const out = [{ ts: cutoffMs, sim: 0, broker: 0 }];
   for (const e of events) {
     if (e.kind === 'sim')    simEq += e.pnl;
     if (e.kind === 'broker') brEq  += e.pnl;
