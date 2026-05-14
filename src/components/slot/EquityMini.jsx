@@ -19,17 +19,12 @@ export default function EquityMini({ data }) {
   const brokerColor = (last.broker ?? 0) >= 0 ? POS_COLOR : NEG_COLOR;
   return (
     <div className="w-full h-full px-2 pt-1 pb-0.5 flex flex-col">
-      <div className="flex items-baseline justify-between text-[10px] text-muted tnum mb-0.5">
-        <span className="flex items-center gap-2">
-          <span>EQUITY</span>
-          <LegendItem label="algo"   color={algoColor}   opacity={ALGO_OPACITY} dashed />
-          <LegendItem label="broker" color={brokerColor} />
-        </span>
-        <span>
-          <span style={{ color: algoColor, opacity: ALGO_OPACITY }}>{fmt(last.algo)}</span>
-          {' · '}
-          <span style={{ color: brokerColor }}>{fmt(last.broker)}</span>
-        </span>
+      <div className="flex items-baseline gap-3 text-[10px] text-muted tnum mb-0.5">
+        <span>EQUITY</span>
+        <LegendItem label="algo"   color={algoColor}   opacity={ALGO_OPACITY} dashed
+                    value={fmt(last.algo)} />
+        <LegendItem label="broker" color={brokerColor}
+                    value={fmt(last.broker)} />
       </div>
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
@@ -63,15 +58,21 @@ export default function EquityMini({ data }) {
   );
 }
 
-function LegendItem({ label, color, opacity = 1, dashed }) {
+// One header chip: swatch + label + dollar value. Label stays in
+// the muted/normal text color so the eye doesn't double-encode the
+// sign on top of the swatch+value already carrying it. Whole chip
+// gets the opacity (algo's "ghost" dimming wraps swatch + word +
+// value together, so they read as one logical unit).
+function LegendItem({ label, color, opacity = 1, dashed, value }) {
   return (
-    <span className="inline-flex items-center gap-1" style={{ opacity }}>
-      <svg width="14" height="3">
+    <span className="inline-flex items-baseline gap-1" style={{ opacity }}>
+      <svg width="14" height="3" style={{ alignSelf: 'center' }}>
         <line x1="0" y1="1.5" x2="14" y2="1.5"
               stroke={color} strokeWidth="1.4"
               strokeDasharray={dashed ? '2 3' : undefined} />
       </svg>
-      <span style={{ color }}>{label}</span>
+      <span>{label}</span>
+      <span style={{ color }}>{value}</span>
     </span>
   );
 }
