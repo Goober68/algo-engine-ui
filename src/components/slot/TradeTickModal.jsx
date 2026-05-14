@@ -298,6 +298,14 @@ function WebhookPanel({ audit, trade }) {
       <KV k="signal id"     v={sigId} />
       <KV k="algo"          v={algo} />
       <KV k="POST ts"       v={fmtFullTime(audit?.ts_ns ?? 0)} />
+      <details className="col-span-2 mt-2 cursor-pointer">
+        <summary className="text-[10px] uppercase tracking-wide text-muted hover:text-text">
+          raw payload
+        </summary>
+        <pre className="mt-1 text-[10px] leading-tight bg-bg p-2 rounded border border-border overflow-x-auto whitespace-pre">
+{JSON.stringify({ request: audit?.request, response: audit?.response, status: audit?.status }, null, 2)}
+        </pre>
+      </details>
     </div>
   );
 }
