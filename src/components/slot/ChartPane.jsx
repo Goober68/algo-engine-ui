@@ -139,6 +139,10 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
         const eb = Math.floor(t.entry_ts / 1e9 / tfNow) * tfNow;
         return eb === clickSec || eb + tfNow === clickSec;
       };
+      // Prefer real broker fill > real algo intent > ad-hoc (just the
+      // bar's open ts, no trade context). Ad-hoc clicks open the tick
+      // modal in inspect-only mode -- ticks visible, no entry/exit
+      // markers or bracket lines, prev/next still navigates algo bars.
       const broker = currentBrokerRef.current || [];
       for (const t of broker) {
         if (matches(t)) { setSelectedTradeKeyRef.current(t.entry_ts); return; }
@@ -147,6 +151,8 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
       for (const t of algos) {
         if (matches(t)) { setSelectedTradeKeyRef.current(t.entry_ts); return; }
       }
+      // No trade on this bar -- ad-hoc tick view at bar open.
+      setSelectedTradeKeyRef.current(clickSec * 1e9);
     });
 
     chartRef.current = chart;

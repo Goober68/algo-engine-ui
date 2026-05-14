@@ -103,41 +103,41 @@ export default function SlotView() {
 // Resolves the trade + matching decision from data + the selected key,
 // wires prev/next navigation across the broker trades array.
 function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
-  // Resolve the clicked trade from EITHER source. Prefer broker (its
-  // entry_ts is the canonical "when did we have a position"); fall
-  // back to algo-only when the runner POSTed but no broker fill landed
-  // (cap-suppressed, HTTP error, missed POST, etc).
-  const brokerHit = data.broker.find(t => t.entry_ts === modalTradeKey);
+  // Resolve the clicked key from EITHER source, then fall back to
+  // ad-hoc (the modalTradeKey itself is just a ts in ns -- a bar
+  // click on an empty bar, e.g.). Ad-hoc opens the modal in inspect-
+  // only mode: ticks visible, no entry/exit markers, no bracket lines.
+  const brokerHit = (data.broker || []).find(t => t.entry_ts === modalTradeKey);
   const algoHit   = brokerHit ? null
     : (data.trades || []).find(t => t.entry_ts === modalTradeKey);
-  const focal = brokerHit || algoHit;
-  if (!focal) { onClose(); return null; }
+  const focal     = brokerHit || algoHit
+    || { ad_hoc: true, ts_ns: modalTradeKey, entry_ts: modalTradeKey,
+         entry_px: null, side: null, qty: 0 };
 
-  // Counterpart from the OTHER source. nearestPair pairs on side+qty
-  // within a 5-min window (mirrors TradeTable's MATCH_AHEAD_NS).
-  const brokerTrade = brokerHit || nearestPair(data.broker, focal);
-  const algoTrade   = algoHit   || nearestPair(data.trades || [], focal);
+  // Counterpart from the OTHER source (only meaningful when focal is
+  // a real trade, not an ad-hoc bar click).
+  const brokerTrade = brokerHit || (focal.ad_hoc ? null : nearestPair(data.broker, focal));
+  const algoTrade   = algoHit   || (focal.ad_hoc ? null : nearestPair(data.trades || [], focal));
 
-  // Match decision by snapping entry to the bar boundary.
+  // Match decision + audit only for real trades.
   const TF = 180;
-  const entrySec = Math.floor(focal.entry_ts / 1e9);
-  const barSec   = Math.floor(entrySec / TF) * TF;
-  const decision = data.decisions?.find(d =>
-    Math.floor(d.ts_ns / 1e9 / TF) * TF === barSec);
+  let decision = null;
+  let audit = null;
+  if (!focal.ad_hoc) {
+    const entrySec = Math.floor(focal.entry_ts / 1e9);
+    const barSec   = Math.floor(entrySec / TF) * TF;
+    decision = data.decisions?.find(d =>
+      Math.floor(d.ts_ns / 1e9 / TF) * TF === barSec);
+    audit = findAuditForTrade(data.audit || [], focal);
+  }
 
-  // Match the audit (webhook POST) that produced this fill.
-  const audit = findAuditForTrade(data.audit || [], focal);
-
-  // prev/next nav across the union of broker + algo entry_ts (both
-  // sources visible on the chart, so the user can paddle between
-  // adjacent triangles regardless of which side the trade is from).
-  const allKeys = new Set();
-  for (const t of (data.broker || []))  allKeys.add(t.entry_ts);
-  for (const t of (data.trades || []))  allKeys.add(t.entry_ts);
-  const sorted = [...allKeys].sort((a, b) => a - b);
-  const idx = sorted.indexOf(modalTradeKey);
-  const prev = idx > 0                ? sorted[idx - 1] : null;
-  const next = idx < sorted.length - 1 ? sorted[idx + 1] : null;
+  // Prev/next nav walks ALGO order bars only (data.trades sorted by
+  // entry_ts). The "next algo bar" from any starting point -- even an
+  // ad-hoc bar click or a broker-only fill -- is the next algo
+  // entry_ts strictly after the current key.
+  const algoSorted = (data.trades || []).slice().sort((a, b) => a.entry_ts - b.entry_ts);
+  const prev = algoSorted.filter(t => t.entry_ts < modalTradeKey).pop();
+  const next = algoSorted.find(t => t.entry_ts > modalTradeKey);
 
   return (
     <TradeTickModal
@@ -147,8 +147,8 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
       decision={decision}
       audit={audit}
       onClose={onClose}
-      onPrev={prev != null ? () => onJump(prev) : null}
-      onNext={next != null ? () => onJump(next) : null}
+      onPrev={prev ? () => onJump(prev.entry_ts) : null}
+      onNext={next ? () => onJump(next.entry_ts) : null}
     />
   );
 }

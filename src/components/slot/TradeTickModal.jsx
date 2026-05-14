@@ -71,8 +71,20 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
   const [err, setErr] = useState(null);
   const [source, setSource] = useState(null); // 'coord' | 'archive' | null
 
-  const fromNs = trade?.entry_ts ? trade.entry_ts - PRE_PAD_NS : 0;
-  const toNs   = trade?.exit_ts  ? trade.exit_ts  + POST_PAD_NS : (trade?.entry_ts || 0) + PRE_PAD_NS;
+  // Tick window:
+  //   real trade: [entry-5s, exit+5s] (or [entry-5s, entry+5s] when
+  //                still open). Anchored on the trade so the modal
+  //                opens centered on the action.
+  //   ad-hoc bar click: bar_open ± 30s + a 3-min bar's worth of right-
+  //                pad. Wider so the operator gets a meaningful chunk
+  //                of price action around the bar they clicked.
+  const adHocAnchor = trade?.ad_hoc;
+  const fromNs = adHocAnchor
+    ? trade.entry_ts - 30 * 1_000_000_000
+    : (trade?.entry_ts ? trade.entry_ts - PRE_PAD_NS : 0);
+  const toNs = adHocAnchor
+    ? trade.entry_ts + 210 * 1_000_000_000
+    : (trade?.exit_ts ? trade.exit_ts + POST_PAD_NS : (trade?.entry_ts || 0) + PRE_PAD_NS);
 
   useEffect(() => {
     if (!trade) return;
@@ -152,13 +164,18 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
   if (!trade) return null;
 
   // Derive SL/TP prices from matching decision (if available).
+  // Ad-hoc mode = a chart-bar click on a bar with no trade. The
+  // modal still opens (so the operator can inspect ticks for any
+  // bar) but with all trade-anchored chrome suppressed -- ticks
+  // are the only payload.
+  const adHoc = !!trade.ad_hoc;
   const isLong = trade.side === 'long';
   const dir = isLong ? 1 : -1;
-  const slPx = decision?.sl_ticks
+  const slPx = !adHoc && decision?.sl_ticks
     ? trade.entry_px - dir * decision.sl_ticks * TICK : null;
-  const tpPx = decision?.tp_ticks
+  const tpPx = !adHoc && decision?.tp_ticks
     ? trade.entry_px + dir * decision.tp_ticks * TICK : null;
-  const tsPx = decision?.trail_trigger_ticks
+  const tsPx = !adHoc && decision?.trail_trigger_ticks
     ? trade.entry_px + dir * decision.trail_trigger_ticks * TICK : null;
 
   return (
@@ -173,13 +190,22 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
         {/* Header */}
         <div className="flex items-center gap-3 mb-3">
           <h3 className="text-sm font-semibold flex-1 truncate">
-            <span className={isLong ? 'text-buy' : 'text-sell'}>{trade.side.toUpperCase()}</span>
-            {' · '}qty={trade.qty}
-            {' · entry '}{fmtFullTime(trade.entry_ts)}{' @ '}{trade.entry_px.toFixed(2)}
-            {trade.exit_ts && <>
-              {' · exit '}{fmtFullTime(trade.exit_ts)}{' @ '}{(trade.exit_px ?? 0).toFixed(2)}
-              {' '}<span className={trade.pnl > 0 ? 'text-win' : 'text-loss'}>{fmtPnl(trade.pnl)}</span>
-            </>}
+            {adHoc ? (
+              <>
+                <span className="text-muted">tick window</span>
+                {' · '}{fmtFullTime(trade.entry_ts)}
+              </>
+            ) : (
+              <>
+                <span className={isLong ? 'text-buy' : 'text-sell'}>{trade.side.toUpperCase()}</span>
+                {' · '}qty={trade.qty}
+                {' · entry '}{fmtFullTime(trade.entry_ts)}{' @ '}{trade.entry_px.toFixed(2)}
+                {trade.exit_ts && <>
+                  {' · exit '}{fmtFullTime(trade.exit_ts)}{' @ '}{(trade.exit_px ?? 0).toFixed(2)}
+                  {' '}<span className={trade.pnl > 0 ? 'text-win' : 'text-loss'}>{fmtPnl(trade.pnl)}</span>
+                </>}
+              </>
+            )}
           </h3>
           <button onClick={onPrev} disabled={!onPrev}
                   className="text-muted hover:text-text disabled:opacity-25 px-1">◀</button>
@@ -188,38 +214,37 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           <button onClick={onClose} className="text-muted hover:text-text text-lg leading-none">×</button>
         </div>
 
-        {/* Summary 3-col:
-              col 1 = order specs (direction, size, TP/SL/TT in ticks)
-              col 2 = algo/broker entry+exit comparison (label width
-                      pinned so HH:MM:SS @ price columns align by eye)
-              col 3 = duration / reason / profit / comment */}
-        <div className="grid grid-cols-3 gap-x-6 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
-          <div className="space-y-1">
-            <KV k="trade" v={fmtTradeSpec(trade, audit)} cls={isLong ? 'text-buy' : 'text-sell'} />
-            <KV k="TP"    v={fmtTicksAbs(decision?.tp_ticks, tpPx)}  cls="text-tp" />
-            <KV k="SL"    v={fmtTicksAbs(decision?.sl_ticks, slPx)}  cls="text-sl" />
-            <KV k="TT"    v={fmtTrailAbs(decision, tsPx)}            cls="text-trail" />
+        {/* Summary 3-col (only when this is a real trade -- ad-hoc bar
+            clicks just want the tick chart). */}
+        {!adHoc && (
+          <div className="grid grid-cols-3 gap-x-6 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
+            <div className="space-y-1">
+              <KV k="trade" v={fmtTradeSpec(trade, audit)} cls={isLong ? 'text-buy' : 'text-sell'} />
+              <KV k="TP"    v={fmtTicksAbs(decision?.tp_ticks, tpPx)}  cls="text-tp" />
+              <KV k="SL"    v={fmtTicksAbs(decision?.sl_ticks, slPx)}  cls="text-sl" />
+              <KV k="TT"    v={fmtTrailAbs(decision, tsPx)}            cls="text-trail" />
+            </div>
+            <div className="space-y-1">
+              <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
+                  cls={algoTrade ? '' : 'text-muted'} />
+              <KV k="broker entry" kw={92} v={fmtTimePx(brokerTrade?.entry_ts, brokerTrade?.entry_px)}
+                  cls={brokerTrade ? '' : 'text-muted'} />
+              <KV k="algo exit"    kw={92} v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
+                  cls={algoTrade ? '' : 'text-muted'} />
+              <KV k="broker exit"  kw={92} v={fmtTimePx(brokerTrade?.exit_ts, brokerTrade?.exit_px)}
+                  cls={brokerTrade ? '' : 'text-muted'} />
+            </div>
+            <div className="space-y-1">
+              <KV k="duration" v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
+              <KV k="reason"   v={decision?.reason || trade.reason || 'EXIT'} />
+              <KV k="profit"   v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
+              <KV k="comment"  v={trade.algo_id || ''} />
+            </div>
           </div>
-          <div className="space-y-1">
-            <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
-                cls={algoTrade ? '' : 'text-muted'} />
-            <KV k="broker entry" kw={92} v={fmtTimePx(brokerTrade?.entry_ts, brokerTrade?.entry_px)}
-                cls={brokerTrade ? '' : 'text-muted'} />
-            <KV k="algo exit"    kw={92} v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
-                cls={algoTrade ? '' : 'text-muted'} />
-            <KV k="broker exit"  kw={92} v={fmtTimePx(brokerTrade?.exit_ts, brokerTrade?.exit_px)}
-                cls={brokerTrade ? '' : 'text-muted'} />
-          </div>
-          <div className="space-y-1">
-            <KV k="duration" v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
-            <KV k="reason"   v={decision?.reason || trade.reason || 'EXIT'} />
-            <KV k="profit"   v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
-            <KV k="comment"  v={trade.algo_id || ''} />
-          </div>
-        </div>
+        )}
 
         {/* Webhook bracket (what was POSTed to the relay for this trade) */}
-        {audit && <WebhookPanel audit={audit} trade={trade} />}
+        {!adHoc && audit && <WebhookPanel audit={audit} trade={trade} />}
 
         {/* Tick chart */}
         <TickChart
