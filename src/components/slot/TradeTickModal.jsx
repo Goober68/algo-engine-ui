@@ -464,24 +464,31 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
   );
 }
 
-// X-axis time formatter for the tick chart. At second-or-coarser
-// step, full HH:MM:SS. At sub-second step ("subSec"), labels spill:
-// ms-aligned slots show `.NNN` (where in the current second we are);
-// second boundaries show `:NN` (which second we just rolled into).
-// So a 100ms-step axis reads:
-//   .100 .200 .300 .400 .500 .600 .700 .800 .900 :58 .100 .200 ...
-function fmtTickAxisTime(ns, subSec) {
+// X-axis time formatter for the tick chart. Spills hierarchically:
+// labels show their position WITHIN the next-coarser unit, except at
+// boundary crossings where they show the coarser unit itself.
+//   sub-sec step: .NNN within a second; :NN at the second roll
+//   sub-min step: :NN within a minute; HH:MM at the minute roll
+//   minute+ step: HH:MM (seconds always 00 at minute steps)
+// So a 100ms axis reads:
+//   .100 .200 .300 .400 .500 .600 .700 .800 .900 :58 .100 .200
+// And a 5s axis reads:
+//   :40 :45 :50 :55 12:35 :05 :10 :15 :20 :25 :30
+// One spill rule, applied at every level.
+function fmtTickAxisTime(ns, xStepNs) {
   const d = new Date(ns / 1e6);
-  if (!subSec) {
-    return d.toLocaleTimeString([], {
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-    });
-  }
   const ms = d.getMilliseconds();
-  if (ms === 0) {
-    return `:${String(d.getSeconds()).padStart(2, '0')}`;
+  const sec = d.getSeconds();
+  const pad2 = (n) => String(n).padStart(2, '0');
+  if (xStepNs < 1_000_000_000) {
+    if (ms === 0) return `:${pad2(sec)}`;
+    return `.${String(ms).padStart(3, '0')}`;
   }
-  return `.${String(ms).padStart(3, '0')}`;
+  if (xStepNs < 60_000_000_000) {
+    if (sec === 0) return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    return `:${pad2(sec)}`;
+  }
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 function fmtSpan(ns) {
@@ -531,17 +538,13 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
       if (t.ask > pmax) pmax = t.ask;
     }
   }
-  if (brokerTrade?.entry_px) { pmin = Math.min(pmin, brokerTrade.entry_px); pmax = Math.max(pmax, brokerTrade.entry_px); }
-  if (brokerTrade?.exit_px)  { pmin = Math.min(pmin, brokerTrade.exit_px);  pmax = Math.max(pmax, brokerTrade.exit_px); }
-  if (algoTrade?.entry_px)   { pmin = Math.min(pmin, algoTrade.entry_px);   pmax = Math.max(pmax, algoTrade.entry_px); }
-  if (algoTrade?.exit_px)    { pmin = Math.min(pmin, algoTrade.exit_px);    pmax = Math.max(pmax, algoTrade.exit_px); }
-  // No bracket-line extension. Y-range is determined by ticks alone;
-  // entry / TT / SL / TP all render conditionally on already being
+  // No price-extension AT ALL -- y-range is the visible-window ticks
+  // alone. Bracket lines (entry / TT / SL / TP) and entry/exit
+  // triangles (broker / algo) render conditionally on already being
   // in band. At default zoom the window is centered on the trade so
-  // entry naturally falls in the tick-derived range; when the
-  // operator zooms into a tight region (e.g. trail-trigger moment
-  // 30+ ticks away from entry), bracket lines outside that region
-  // simply hide -- they don't compress the area being studied.
+  // they naturally fall inside the tick-derived range. On zoom-in
+  // away from entry, off-band markers simply skip -- nothing
+  // compresses the area being studied.
   const pad = (pmax - pmin) * 0.05 || 0.5;
   pmin -= pad; pmax += pad;
   const xT = (ts) => x0 + (x1 - x0) * (ts - fromNs) / (toNs - fromNs);
@@ -585,7 +588,6 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   for (const s of NICE_STEPS_NS) {
     if (spanNs / s <= targetN) { xStep = s; break; }
   }
-  const subSec = xStep < 1_000_000_000;
   const xStart = Math.ceil(fromNs / xStep) * xStep;
   ctx.fillStyle = '#7c8190';
   ctx.textAlign = 'center';
@@ -594,7 +596,7 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     const x = x0 + (x1 - x0) * (ts - fromNs) / spanNs;
     ctx.strokeStyle = '#1a1d23';
     ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y1); ctx.stroke();
-    ctx.fillText(fmtTickAxisTime(ts, subSec), x, y1 + 4);
+    ctx.fillText(fmtTickAxisTime(ts, xStep), x, y1 + 4);
   }
 
   // Bracket lines: render only when their price is already inside
@@ -617,13 +619,17 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   // Broker entry/exit (solid) — the ground truth for what executed.
   // Skip when no broker counterpart exists (algo-only trade -- runner
   // POSTed but the broker didn't fill); the algo's hollow markers
-  // below carry the rendering on their own.
-  if (brokerTrade?.entry_ts) {
+  // below carry the rendering on their own. Also skip when the
+  // marker's price is outside the visible y-band so off-window
+  // triangles don't pollute the canvas edges.
+  if (brokerTrade?.entry_ts && inBand(brokerTrade.entry_px)
+      && brokerTrade.entry_ts >= fromNs && brokerTrade.entry_ts <= toNs) {
     const ex = xT(brokerTrade.entry_ts);
     const ey = yP(brokerTrade.entry_px);
     drawArrow(ctx, ex, ey, brokerTrade.side === 'long' ? '#1976d2' : '#ffff00', 'right');
   }
-  if (brokerTrade?.exit_ts && brokerTrade.exit_px) {
+  if (brokerTrade?.exit_ts && inBand(brokerTrade.exit_px)
+      && brokerTrade.exit_ts >= fromNs && brokerTrade.exit_ts <= toNs) {
     const xx = xT(brokerTrade.exit_ts);
     const yy = yP(brokerTrade.exit_px);
     drawArrow(ctx, xx, yy, brokerTrade.pnl > 0 ? '#7fff00' : '#ef5350', 'left');
@@ -631,12 +637,14 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   // Algo-sim entry/exit (hollow) — what the runner THOUGHT it filled at.
   // Compare to the solid broker arrow at the same position to see slip
   // (horizontal gap = time-of-fill diff; vertical gap = px diff).
-  if (algoTrade?.entry_ts) {
+  if (algoTrade?.entry_ts && inBand(algoTrade.entry_px)
+      && algoTrade.entry_ts >= fromNs && algoTrade.entry_ts <= toNs) {
     const ex = xT(algoTrade.entry_ts);
     const ey = yP(algoTrade.entry_px);
     drawArrow(ctx, ex, ey, algoTrade.side === 'long' ? '#1976d2' : '#ffff00', 'right', /*hollow*/ true);
   }
-  if (algoTrade?.exit_ts && algoTrade?.exit_px) {
+  if (algoTrade?.exit_ts && inBand(algoTrade.exit_px)
+      && algoTrade.exit_ts >= fromNs && algoTrade.exit_ts <= toNs) {
     const xx = xT(algoTrade.exit_ts);
     const yy = yP(algoTrade.exit_px);
     drawArrow(ctx, xx, yy, (algoTrade.pnl ?? 0) > 0 ? '#7fff00' : '#ef5350', 'left', /*hollow*/ true);
