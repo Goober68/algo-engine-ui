@@ -184,29 +184,30 @@ export default function TradeTickModal({ trade, algoTrade, decision, audit, onCl
         </div>
 
         {/* Summary 3-col:
-              col 1 = order specs (direction, size, TP, SL, trail)
-              col 2 = algo/broker entry+exit comparison + profit
-              col 3 = duration / reason / comment */}
+              col 1 = order specs (direction, size, TP/SL/TT in ticks)
+              col 2 = algo/broker entry+exit comparison (label width
+                      pinned so HH:MM:SS @ price columns align by eye)
+              col 3 = duration / reason / profit / comment */}
         <div className="grid grid-cols-3 gap-x-6 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
           <div className="space-y-1">
             <KV k="direction" v={trade.side.toUpperCase()} cls={isLong ? 'text-buy' : 'text-sell'} />
             <KV k="size"      v={trade.qty} />
-            <KV k="TP"        v={tpPx ? tpPx.toFixed(2) : '—'} cls={tpPx ? 'text-tp' : ''} />
-            <KV k="SL"        v={slPx ? slPx.toFixed(2) : '—'} cls={slPx ? 'text-sl' : ''} />
-            <KV k="TT"        v={fmtTrail(decision)} cls="text-trail" />
+            <KV k="TP"        v={fmtTicksAbs(decision?.tp_ticks, tpPx)}                  cls="text-tp" />
+            <KV k="SL"        v={fmtTicksAbs(decision?.sl_ticks, slPx)}                  cls="text-sl" />
+            <KV k="TT"        v={fmtTrailAbs(decision, tsPx)}                            cls="text-trail" />
           </div>
           <div className="space-y-1">
-            <KV k="algo entry"   v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
+            <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
                 cls={algoTrade ? '' : 'text-muted'} />
-            <KV k="broker entry" v={fmtTimePx(trade.entry_ts, trade.entry_px)} />
-            <KV k="algo exit"    v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
+            <KV k="broker entry" kw={92} v={fmtTimePx(trade.entry_ts, trade.entry_px)} />
+            <KV k="algo exit"    kw={92} v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
                 cls={algoTrade ? '' : 'text-muted'} />
-            <KV k="broker exit"  v={fmtTimePx(trade.exit_ts, trade.exit_px)} />
-            <KV k="profit"       v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
+            <KV k="broker exit"  kw={92} v={fmtTimePx(trade.exit_ts, trade.exit_px)} />
           </div>
           <div className="space-y-1">
             <KV k="duration" v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
             <KV k="reason"   v={decision?.reason || trade.reason || 'EXIT'} />
+            <KV k="profit"   v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
             <KV k="comment"  v={trade.algo_id || ''} />
           </div>
         </div>
@@ -491,10 +492,14 @@ function drawArrow(ctx, x, y, color, dir, hollow = false) {
   }
 }
 
-function KV({ k, v, cls = '' }) {
+function KV({ k, v, cls = '', kw }) {
+  // Optional `kw` (label width in px) pins the label column so values
+  // start at the same x-coord across rows -- makes comparing
+  // "HH:MM:SS @ price" cells column-by-column trivial.
+  const labelStyle = kw ? { width: `${kw}px` } : undefined;
   return (
     <div className="flex items-baseline gap-2">
-      <span className="text-muted shrink-0 text-[11px]">{k}</span>
+      <span className="text-muted shrink-0 text-[11px]" style={labelStyle}>{k}</span>
       <span className={`${cls} text-text font-semibold`}>{v}</span>
     </div>
   );
@@ -512,13 +517,24 @@ function fmtTimePx(ns, px) {
   return `${t} @ ${px.toFixed(2)}`;
 }
 
-// Trail summary: "<trigger>t / <dist>t" -- trigger ticks to arm + dist
-// ticks to chase. Em-dash when no decision (= no trail params surfaced).
-function fmtTrail(decision) {
+// "<ticks>t - <abs_price>" formatter for the TP / SL rows. Trader
+// thinks in ticks when sizing brackets; abs price is the eye-check
+// against the chart. Em-dash when either side missing.
+function fmtTicksAbs(ticks, px) {
+  if (ticks == null) return '—';
+  if (px == null)    return `${ticks}t`;
+  return `${ticks}t - ${px.toFixed(2)}`;
+}
+
+// Trail row: trigger ticks / dist ticks - arm price.
+// Trigger has an abs (the "arm at this price" target); distance is a
+// delta with no single abs equivalent.
+function fmtTrailAbs(decision, armPx) {
   const trig = decision?.trail_trigger_ticks;
   const dist = decision?.trail_dist_ticks;
   if (trig == null || dist == null) return '—';
-  return `${trig}t / ${dist}t`;
+  if (armPx == null) return `${trig}t / ${dist}t`;
+  return `${trig}t / ${dist}t - ${armPx.toFixed(2)}`;
 }
 
 function fmtFullTime(ns) {
