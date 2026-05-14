@@ -1,14 +1,13 @@
-// Standalone view of every relay-audit POST for a slot. Surfaces the
-// orphan rows TradeTable doesn't show -- POSTs that errored, were
-// cap-suppressed, or that the broker never filled.
+// Log-style view of every relay-audit POST for a slot. Reads like a
+// tail -- one line per POST, ts + status + JSON content (truncated
+// with overflow ellipsis). Click a line to open its matched tick
+// modal (when a broker fill paired); orphan POSTs (cap-suppressed,
+// HTTP errors, missed fills) stay clickable but have no modal target,
+// so they just show their content inline + the matched-fill column
+// reads em-dash.
 //
-// Each row:
-//   ts | side qty | status | signal_id | matched? | reason
-// Click a row -> if a matching broker fill exists, jump to its tick
-// modal via setSelectedTradeKey. Orphan rows render as click-through
-// to the audit's own JSON (modal opens on the algo-side trade pairing
-// when we have one; falls back to the audit timestamp + a placeholder
-// modal when not).
+// Mirrors stdout/stderr panes' visual density on purpose -- this is
+// the third member of the bottom-drawer trio.
 
 import { useMemo } from 'react';
 
@@ -18,37 +17,24 @@ const MATCH_BEHIND_NS = 30 * 1_000_000_000;       // 30s backward
 export default function OrdersPanel({ data, setSelectedTradeKey }) {
   const rows = useMemo(() => buildRows(data), [data]);
   return (
-    <div className="h-full overflow-y-auto text-xs tnum">
-      <div className="sticky top-0 grid grid-cols-[80px_60px_60px_1fr_70px] gap-2 px-2 py-1 bg-panel border-b border-border text-[10px] uppercase text-muted tracking-wide">
-        <span>POST ts</span>
-        <span>side qty</span>
-        <span>status</span>
-        <span>signal / outcome</span>
-        <span className="text-right">matched</span>
-      </div>
+    <div className="flex-1 overflow-y-auto p-2 text-[11px] font-mono text-muted leading-tight">
       {!rows.length && (
-        <div className="p-3 text-muted text-[11px]">No relay POSTs yet.</div>
+        <span className="italic text-muted">no relay POSTs yet</span>
       )}
       {rows.map(r => (
         <button
           key={r.key}
           onClick={() => r.matchedKey != null && setSelectedTradeKey(r.matchedKey)}
           disabled={r.matchedKey == null}
+          title={r.full}
           className={
-            'w-full text-left grid grid-cols-[80px_60px_60px_1fr_70px] gap-2 px-2 py-1 ' +
-            'border-b border-border/30 hover:bg-accent/[0.04] disabled:cursor-default'
+            'flex items-baseline gap-2 w-full text-left ' +
+            'hover:bg-accent/[0.04] disabled:cursor-default'
           }
-          title={r.matchedKey != null ? 'Click to open tick modal' : 'No matched fill'}
         >
-          <span className="text-muted">{fmtTime(r.ts_ns)}</span>
-          <span className={r.side === 'long' ? 'text-buy' : r.side === 'short' ? 'text-sell' : 'text-muted'}>
-            {r.side ? `${r.side[0].toUpperCase()} ${r.qty}` : '—'}
-          </span>
+          <span className="text-muted shrink-0">{fmtTime(r.ts_ns)}</span>
           <StatusChip status={r.status} />
-          <span className="truncate" title={r.outcome}>{r.outcome}</span>
-          <span className={'text-right ' + (r.matchedKey != null ? 'text-long' : 'text-muted')}>
-            {r.matchedKey != null ? '✓' : '—'}
-          </span>
+          <span className={'truncate flex-1 ' + r.cls}>{r.line}</span>
         </button>
       ))}
     </div>
@@ -57,11 +43,13 @@ export default function OrdersPanel({ data, setSelectedTradeKey }) {
 
 function StatusChip({ status }) {
   if (status == null) {
-    return <span className="text-muted">—</span>;
+    return <span className="text-muted shrink-0 w-[28px]">---</span>;
   }
   const ok = status >= 200 && status < 300;
   return (
-    <span className={ok ? 'text-long' : 'text-short'}>{status}</span>
+    <span className={'shrink-0 w-[28px] tnum ' + (ok ? 'text-long' : 'text-short')}>
+      {status}
+    </span>
   );
 }
 
@@ -80,17 +68,31 @@ function buildRows(data) {
     if (matched) taken.add(matched);
     const status = a.status;
     const ok = status != null && status >= 200 && status < 300;
-    let outcome;
-    if (matched)               outcome = `${req.algo_signal_id || '—'} → filled`;
-    else if (status == null)   outcome = `${req.algo_signal_id || '—'} (no audit / dryrun)`;
-    else if (!ok)              outcome = `${req.algo_signal_id || '—'} → HTTP ${status} ${truncResp(a)}`;
-    else                       outcome = `${req.algo_signal_id || '—'} → posted, no broker match`;
+    // One-liner: stringify the request body so the operator can read
+    // signal_id / action / price / brackets at a glance. Long; the
+    // row's `truncate` + tooltip handle overflow.
+    const reqStr = req && Object.keys(req).length
+      ? JSON.stringify(req)
+      : '(no request body)';
+    let suffix = '';
+    if (matched)               suffix = ' → filled';
+    else if (status == null)   suffix = '';
+    else if (!ok)              suffix = ` → ${truncResp(a)}`;
+    else                       suffix = ' → posted, no fill';
+    const line = reqStr + suffix;
+    // Color: red for HTTP error, green for matched-fill, default
+    // muted for posted-but-not-yet-filled / dryrun. Keeps the eye
+    // drawn to anomalies the way stderr's red lines do.
+    const cls = !ok && status != null ? 'text-short'
+              : matched               ? 'text-long/80'
+              : '';
     return {
       key:        a.ts_ns,
       ts_ns:      a.ts_ns,
-      side, qty,
       status,
-      outcome,
+      line,
+      cls,
+      full:       JSON.stringify({ request: req, response: a.response, status }, null, 2),
       matchedKey: matched ? matched.entry_ts : null,
     };
   });
@@ -111,9 +113,9 @@ function nearestMatch(list, taken, ts, side, qty) {
 
 function truncResp(audit) {
   const s = audit?.response;
-  if (!s) return '';
+  if (!s) return `HTTP ${audit?.status}`;
   const text = typeof s === 'string' ? s : JSON.stringify(s);
-  return text.length > 60 ? text.slice(0, 60) + '…' : text;
+  return text.length > 80 ? text.slice(0, 80) + '…' : text;
 }
 
 function fmtTime(ns) {
