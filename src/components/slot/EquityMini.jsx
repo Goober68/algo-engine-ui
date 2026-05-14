@@ -1,16 +1,17 @@
-// Tight equity strip: algo (dotted + dimmed = desired outcome) vs
-// broker (solid = actual outcome). Curve color reflects the SIGN of
-// the window-end value -- green when the period is up, red when
-// down -- so a single glance tells you "did this slot make money or
-// lose money this window". Algo and broker pick their signs
-// independently (slippage can flip one without the other).
+// Tight equity strip: algo (dotted = desired outcome) vs broker
+// (solid = actual outcome). Curve color reflects the SIGN of the
+// window-end value -- green when the period is up, red when down --
+// so a single glance tells you "did this slot make money or lose
+// money this window". Algo and broker pick their signs independently
+// (slippage can flip one without the other). Both at full opacity --
+// the dotted-vs-solid line style alone carries the desired/actual
+// distinction; dimming algo would make the slip story harder to read.
 
 import { LineChart, Line, ResponsiveContainer, ReferenceLine, XAxis, YAxis, Tooltip } from 'recharts';
 import { useMemo } from 'react';
 
-const POS_COLOR    = '#22c55e';   // green-500 -> period up
-const NEG_COLOR    = '#ef4444';   // red-500   -> period down
-const ALGO_OPACITY = 0.55;
+const POS_COLOR = '#22c55e';   // green-500 -> period up
+const NEG_COLOR = '#ef4444';   // red-500   -> period down
 
 export default function EquityMini({ data }) {
   const series = useMemo(() => buildEquity(data), [data]);
@@ -21,10 +22,8 @@ export default function EquityMini({ data }) {
     <div className="w-full h-full px-2 pt-1 pb-0.5 flex flex-col">
       <div className="flex items-baseline gap-3 text-[10px] text-muted tnum mb-0.5">
         <span>EQUITY</span>
-        <LegendItem label="algo"   color={algoColor}   opacity={ALGO_OPACITY} dashed
-                    value={fmt(last.algo)} />
-        <LegendItem label="broker" color={brokerColor}
-                    value={fmt(last.broker)} />
+        <LegendItem label="algo"   color={algoColor}   dashed value={fmt(last.algo)} />
+        <LegendItem label="broker" color={brokerColor}        value={fmt(last.broker)} />
       </div>
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
@@ -49,7 +48,7 @@ export default function EquityMini({ data }) {
               labelFormatter={(ts) => new Date(ts).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
               formatter={(v, name) => [v == null ? '—' : `$${Number(v).toFixed(2)}`, name]}
             />
-            <Line type="linear" dataKey="algo"   stroke={algoColor}   strokeOpacity={ALGO_OPACITY} strokeDasharray="2 3" dot={false} strokeWidth={1.4} isAnimationActive={false} connectNulls />
+            <Line type="linear" dataKey="algo"   stroke={algoColor}   strokeDasharray="2 3" dot={false} strokeWidth={1.4} isAnimationActive={false} connectNulls />
             <Line type="linear" dataKey="broker" stroke={brokerColor} dot={false} strokeWidth={1.6} isAnimationActive={false} connectNulls />
           </LineChart>
         </ResponsiveContainer>
