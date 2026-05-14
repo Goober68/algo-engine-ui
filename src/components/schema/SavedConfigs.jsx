@@ -13,7 +13,7 @@ import {
   listAll, saveLocal, saveRemote,
 } from '../../data/configsClient';
 
-export default function SavedConfigs({ strategy, currentValues, onLoad }) {
+export default function SavedConfigs({ strategy, currentValues, onLoad, onReset }) {
   const [open, setOpen]       = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [list, setList]       = useState({ local: [], remote: [] });
@@ -87,6 +87,18 @@ export default function SavedConfigs({ strategy, currentValues, onLoad }) {
       >
         + Save
       </button>
+      {onReset && (
+        <button
+          type="button"
+          onClick={() => {
+            if (window.confirm('Reset all sliders to schema defaults?')) onReset();
+          }}
+          title="Reset every slider to its schema default value"
+          className="px-2 py-0.5 rounded border border-border bg-bg text-muted text-[10px] hover:text-text hover:border-muted"
+        >
+          Reset
+        </button>
+      )}
 
       {open && (
         <ConfigsList

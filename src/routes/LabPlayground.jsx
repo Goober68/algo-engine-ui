@@ -180,6 +180,15 @@ export default function LabPlayground() {
             if (debounceRef.current) clearTimeout(debounceRef.current);
             debounceRef.current = setTimeout(triggerRun, RUN_DEBOUNCE_MS);
           }}
+          onReset={() => {
+            const defaults = Object.fromEntries(
+              sweepableKeys(schema).map(k => [k, schema.params[k]?.default ?? 0])
+            );
+            setValues(defaults);
+            writeAutosave(defaults);
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = setTimeout(triggerRun, RUN_DEBOUNCE_MS);
+          }}
         />
         <Splitter dir="col" size={sliderWidth} setSize={setSliderWidth}
                   min={220} max={600} />
@@ -260,7 +269,7 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
 // cap, so the sidebar now surfaces every sweepable param grouped by
 // schema section (instead of just the playground_fields[] subset).
 // Each row's value lives in the values dict keyed by the param name.
-function SliderPanel({ schema, values, onChange, width, onLoadConfig }) {
+function SliderPanel({ schema, values, onChange, width, onLoadConfig, onReset }) {
   const sections = useMemo(() => groupSweepableBySection(schema), [schema]);
   return (
     <div style={{ width }}
@@ -270,7 +279,12 @@ function SliderPanel({ schema, values, onChange, width, onLoadConfig }) {
           estate. */}
       <div className="px-2 py-1.5 border-b border-border bg-bg/30 flex items-center gap-2">
         <span className="text-[10px] uppercase tracking-wide text-muted shrink-0">configs</span>
-        <SavedConfigs strategy={STRATEGY} currentValues={values} onLoad={onLoadConfig} />
+        <SavedConfigs
+          strategy={STRATEGY}
+          currentValues={values}
+          onLoad={onLoadConfig}
+          onReset={onReset}
+        />
       </div>
       {sections.map(s => (
         <SchemaSection
