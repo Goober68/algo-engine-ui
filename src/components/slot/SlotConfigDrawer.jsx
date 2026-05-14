@@ -6,7 +6,7 @@
 // per-slot reinit endpoint that engine-claude is shipping.
 //
 // Today the Apply path is stubbed (engine-side endpoint not landed
-// yet -- COORDINATION Stream L131/L132). Until then the drawer is
+// yet -- devstream Stream L131/L132). Until then the drawer is
 // read-only-with-an-edit-preview: you can scroll through the deployed
 // config and see what the slot is actually running, edit values to
 // see your intended diff, and the Apply button surfaces the engine

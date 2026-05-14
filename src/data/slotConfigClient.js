@@ -31,12 +31,12 @@ export async function fetchSlotConfig(runnerId, slotIdx) {
 }
 
 // Engine ships POST /r/{rid}/s/{N}/reinit eventually -- per L131/L132
-// of the COORDINATION Stream. Until then this rejects loudly so the
+// of the devstream Stream. Until then this rejects loudly so the
 // UI doesn't pretend a no-op succeeded.
 export async function applySlotConfig(/*runnerId, slotIdx, cfgPatch*/) {
   throw new Error(
     "Apply not wired -- engine-side POST /r/{rid}/s/{N}/reinit not " +
-    "shipped yet. Tracking via COORDINATION Stream L131/L132 (snapshot/" +
+    "shipped yet. Tracking via devstream Stream L131/L132 (snapshot/" +
     "restore + per-slot reinit endpoint)."
   );
 }
