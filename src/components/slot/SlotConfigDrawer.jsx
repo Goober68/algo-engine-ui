@@ -50,6 +50,15 @@ const META_FIELDS = [
 ];
 const META_KEYS = new Set(META_FIELDS.map(f => f.name));
 
+// Mirror of xovdDefaultSessions() in backtester/runtime/sessionMask.h.
+// Used as the placeholder shape until engine-claude lifts these into
+// per-slot config (Stream ask filed today). Times in NY ET.
+const DEFAULT_SESSIONS = [
+  { startHHMM: 630,  endHHMM: 1155, label: 'S1' },
+  { startHHMM: 1205, endHHMM: 1530, label: 'S2' },
+  { startHHMM: 1705, endHHMM: 155,  label: 'S3 (wraps midnight)' },
+];
+
 export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }) {
   const [schema, setSchema]     = useState(null);
   const [baseline, setBaseline] = useState(null);   // immutable; runner's deployed values
@@ -157,6 +166,31 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
                   </RowFrame>
                 );
               })}
+            </SchemaSection>
+          )}
+          {schema && values && (
+            <SchemaSection id="slotcfg.session"
+                           title="Session windows"
+                           badge={values.__sessionDirty ? 'edited (preview)' : 'preview'}
+                           defaultOpen={false}>
+              <SessionWindowsEditor
+                mode={values.__sessionMode || 'include'}
+                windows={values.__sessionWindows || DEFAULT_SESSIONS}
+                onChange={(m, w) => setValues(prev => ({
+                  ...prev,
+                  __sessionMode: m,
+                  __sessionWindows: w,
+                  __sessionDirty: true,
+                }))}
+              />
+            </SchemaSection>
+          )}
+          {schema && values && (
+            <SchemaSection id="slotcfg.webhook"
+                           title="Webhook (runner-wide)"
+                           badge="preview"
+                           defaultOpen={false}>
+              <WebhookConfigEditor />
             </SchemaSection>
           )}
           {schema && values && sections.map(sec => (
@@ -307,4 +341,155 @@ function shallowEq(a, b) {
     return Math.abs(a - b) < 1e-9;
   }
   return String(a) === String(b);
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Session-windows editor (preview)
+//
+// Two modes:
+//   'include' = trade ONLY inside the listed windows (current runner
+//                default, three NY-time bands)
+//   'exclude' = trade 24h EXCEPT the listed windows (matches the
+//                xovdDefaultExclusions() alternative -- narrow blocks
+//                around bad-window minutes Niall identified 2026-05-12)
+//
+// Engine doesn't yet read these from per-slot cfg (Stream ask filed);
+// this section is shape-preview that lets Niall see the editor UX +
+// validate the model before engine-claude commits to a schema.
+// ──────────────────────────────────────────────────────────────────────
+function SessionWindowsEditor({ mode, windows, onChange }) {
+  const setMode = (m) => onChange(m, windows);
+  const setWindows = (w) => onChange(mode, w);
+  const addWindow = () => setWindows([...windows, { startHHMM: 900, endHHMM: 1000, label: '' }]);
+  const removeWindow = (i) => setWindows(windows.filter((_, j) => j !== i));
+  const updateWindow = (i, patch) => setWindows(
+    windows.map((w, j) => j === i ? { ...w, ...patch } : w)
+  );
+  return (
+    <div className="px-2 py-2 text-[11px]">
+      <div className="flex items-center gap-3 mb-2">
+        <ModeRadio label="Allow only listed" value="include"
+                   active={mode === 'include'} onClick={() => setMode('include')} />
+        <ModeRadio label="Allow all except listed" value="exclude"
+                   active={mode === 'exclude'} onClick={() => setMode('exclude')} />
+        <span className="text-muted ml-auto">times in NY ET</span>
+      </div>
+      <div className="border border-border rounded">
+        <div className="grid grid-cols-[1fr_1fr_1fr_24px] gap-1 px-2 py-1 text-[10px] uppercase text-muted tracking-wide bg-bg/40">
+          <span>Start</span>
+          <span>End</span>
+          <span>Label</span>
+          <span></span>
+        </div>
+        {windows.map((w, i) => (
+          <div key={i} className="grid grid-cols-[1fr_1fr_1fr_24px] gap-1 px-2 py-1 items-center border-t border-border/30">
+            <HhmmInput value={w.startHHMM} onChange={(v) => updateWindow(i, { startHHMM: v })} />
+            <HhmmInput value={w.endHHMM}   onChange={(v) => updateWindow(i, { endHHMM: v })} />
+            <input
+              type="text"
+              value={w.label || ''}
+              placeholder="(optional)"
+              onChange={(e) => updateWindow(i, { label: e.target.value })}
+              className="px-1.5 h-5 bg-bg border border-border rounded text-text text-[11px]"
+            />
+            <button onClick={() => removeWindow(i)}
+                    title="Remove window"
+                    className="text-muted hover:text-short text-sm leading-none">×</button>
+          </div>
+        ))}
+        {!windows.length && (
+          <div className="px-2 py-2 text-muted">
+            {mode === 'include' ? 'No windows -- runner will not trade.' : 'No exclusions -- runner trades 24h.'}
+          </div>
+        )}
+      </div>
+      <button onClick={addWindow}
+              className="mt-2 px-2 py-0.5 rounded bg-bg border border-border hover:border-accent text-muted hover:text-text text-[11px]">
+        + Add window
+      </button>
+      <div className="mt-2 text-[10px] text-muted leading-relaxed">
+        Engine reads {' '}
+        <code className="text-text bg-bg/60 px-1 rounded">xovdDefaultSessions()</code>
+        {' '} (hardcoded, requires rebuild) today. This editor is
+        shape-preview pending Stream ask: lift sessions to per-slot
+        cfg so the runner reads them from xovd_3way_live.jsonl
+        instead.
+      </div>
+    </div>
+  );
+}
+
+function ModeRadio({ label, active, onClick }) {
+  return (
+    <button onClick={onClick}
+      className={
+        'px-2 py-0.5 rounded border text-[11px] ' +
+        (active
+          ? 'bg-accent/20 text-accent border-accent/50'
+          : 'bg-bg text-muted border-border hover:border-accent/50 hover:text-text')
+      }>
+      {label}
+    </button>
+  );
+}
+
+function HhmmInput({ value, onChange }) {
+  // Internal storage = packed HHMM int (e.g. 1530 = 15:30) to match
+  // engine's SessionWindow struct. Display as HH:MM string.
+  const display = (() => {
+    const v = Number.isFinite(value) ? value : 0;
+    const h = Math.floor(v / 100);
+    const m = v % 100;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  })();
+  return (
+    <input
+      type="time"
+      value={display}
+      step={60}
+      onChange={(e) => {
+        const [h, m] = e.target.value.split(':').map(Number);
+        if (Number.isFinite(h) && Number.isFinite(m)) onChange(h * 100 + m);
+      }}
+      className="px-1.5 h-5 bg-bg border border-border rounded text-text text-[11px] tnum"
+    />
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Webhook config (preview; runner-wide infra, not per-slot)
+//
+// The relay credentials live in runner/configs/.env on the VPS; all
+// three slots share them. This section is read-only-preview today --
+// coord doesn't yet have a GET /env/relay endpoint that returns the
+// loaded config (Stream ask filed). When it lands the secret never
+// comes over the wire literal; only a hash prefix so users can verify
+// "yes, the slot's loaded relay key matches the relay UI's record."
+// Edit path is deferred (NSSM bounce + careful credential handling).
+// ──────────────────────────────────────────────────────────────────────
+function WebhookConfigEditor() {
+  return (
+    <div className="px-2 py-2 text-[11px] space-y-2">
+      <KvRow k="endpoint"   v="https://tvbrokerrelay.com" />
+      <KvRow k="tenant id"  v="(loaded from runner/configs/.env)" muted />
+      <KvRow k="api key"    v="(set; not displayed for safety)" muted />
+      <KvRow k="dryrun"     v="(false in prod, true in shadow)" muted />
+      <div className="text-[10px] text-muted leading-relaxed pt-1">
+        Webhook config lives in runner-process .env so all three slots
+        share it. Coord-mediated read (mask + sha8 of the secret so
+        you can spot-check it matches the relay UI) is the next step;
+        edit path deferred since changing the secret needs a runner
+        restart and warrants its own confirmation flow.
+      </div>
+    </div>
+  );
+}
+
+function KvRow({ k, v, muted }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <span className="text-muted shrink-0 w-[80px] text-[10px] uppercase tracking-wide">{k}</span>
+      <span className={muted ? 'text-muted' : 'text-text font-semibold'}>{v}</span>
+    </div>
+  );
 }
