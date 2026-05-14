@@ -468,7 +468,7 @@ function ChartLegendPanel() {
           <LegendSwatch color="rgba(127,255,0,0.5)" small />
           <LegendSwatch color="rgba(127,255,0,0.5)" />
           <LegendSwatch color="rgba(127,255,0,0.5)" big />
-          <span className="text-muted ml-1">size = radius + opacity</span>
+          <span className="text-muted ml-1">size = trade quantity</span>
         </LegendRow>
         <LegendRow>
           <span className="text-muted italic">prints hidden when window ≥ 30s</span>
