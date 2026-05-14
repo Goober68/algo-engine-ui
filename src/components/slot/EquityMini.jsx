@@ -1,21 +1,34 @@
-// Tight equity strip: sim (solid blue) vs broker truth (dashed amber).
-// Both series plotted against TIME (exit_ts), not index, so the curves
-// stay aligned when the two histories have different lengths.
+// Tight equity strip: algo (dotted + dimmed = desired outcome) vs
+// broker (solid = actual outcome). Curve color reflects the SIGN of
+// the window-end value -- green when the period is up, red when
+// down -- so a single glance tells you "did this slot make money or
+// lose money this window". Algo and broker pick their signs
+// independently (slippage can flip one without the other).
 
 import { LineChart, Line, ResponsiveContainer, ReferenceLine, XAxis, YAxis, Tooltip } from 'recharts';
 import { useMemo } from 'react';
 
+const POS_COLOR    = '#22c55e';   // green-500 -> period up
+const NEG_COLOR    = '#ef4444';   // red-500   -> period down
+const ALGO_OPACITY = 0.55;
+
 export default function EquityMini({ data }) {
   const series = useMemo(() => buildEquity(data), [data]);
-  const last   = series.length ? series[series.length - 1] : { sim: 0, broker: 0 };
+  const last   = series.length ? series[series.length - 1] : { algo: 0, broker: 0 };
+  const algoColor   = (last.algo   ?? 0) >= 0 ? POS_COLOR : NEG_COLOR;
+  const brokerColor = (last.broker ?? 0) >= 0 ? POS_COLOR : NEG_COLOR;
   return (
     <div className="w-full h-full px-2 pt-1 pb-0.5 flex flex-col">
       <div className="flex items-baseline justify-between text-[10px] text-muted tnum mb-0.5">
-        <span>EQUITY</span>
+        <span className="flex items-center gap-2">
+          <span>EQUITY</span>
+          <LegendItem label="algo"   color={algoColor}   opacity={ALGO_OPACITY} dashed />
+          <LegendItem label="broker" color={brokerColor} />
+        </span>
         <span>
-          sim <span className={(last.sim ?? 0) >= 0 ? 'text-long' : 'text-short'}>{fmt(last.sim)}</span>
+          <span style={{ color: algoColor, opacity: ALGO_OPACITY }}>{fmt(last.algo)}</span>
           {' · '}
-          broker <span className={(last.broker ?? 0) >= 0 ? 'text-long' : 'text-short'}>{fmt(last.broker)}</span>
+          <span style={{ color: brokerColor }}>{fmt(last.broker)}</span>
         </span>
       </div>
       <div className="flex-1 min-h-0">
@@ -41,12 +54,25 @@ export default function EquityMini({ data }) {
               labelFormatter={(ts) => new Date(ts).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
               formatter={(v, name) => [v == null ? '—' : `$${Number(v).toFixed(2)}`, name]}
             />
-            <Line type="linear" dataKey="sim"    stroke="#5fa8ff" dot={false} strokeWidth={1.2} isAnimationActive={false} connectNulls />
-            <Line type="linear" dataKey="broker" stroke="#ffb300" dot={false} strokeWidth={1.2} strokeDasharray="3 2" isAnimationActive={false} connectNulls />
+            <Line type="linear" dataKey="algo"   stroke={algoColor}   strokeOpacity={ALGO_OPACITY} strokeDasharray="2 3" dot={false} strokeWidth={1.4} isAnimationActive={false} connectNulls />
+            <Line type="linear" dataKey="broker" stroke={brokerColor} dot={false} strokeWidth={1.6} isAnimationActive={false} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </div>
     </div>
+  );
+}
+
+function LegendItem({ label, color, opacity = 1, dashed }) {
+  return (
+    <span className="inline-flex items-center gap-1" style={{ opacity }}>
+      <svg width="14" height="3">
+        <line x1="0" y1="1.5" x2="14" y2="1.5"
+              stroke={color} strokeWidth="1.4"
+              strokeDasharray={dashed ? '2 3' : undefined} />
+      </svg>
+      <span style={{ color }}>{label}</span>
+    </span>
   );
 }
 
@@ -67,7 +93,7 @@ function buildEquity({ trades = [], broker = [] }) {
     if (t.pnl == null || !t.exit_ts) continue;
     const ms = t.exit_ts / 1e6;
     if (ms < cutoffMs) continue;
-    events.push({ ts: ms, kind: 'sim', pnl: t.pnl });
+    events.push({ ts: ms, kind: 'algo', pnl: t.pnl });
   }
   for (const b of broker) {
     if (b.pnl == null || !b.exit_ts) continue;
@@ -77,12 +103,12 @@ function buildEquity({ trades = [], broker = [] }) {
   }
   events.sort((a, b) => a.ts - b.ts);
 
-  let simEq = 0, brEq = 0;
-  const out = [{ ts: cutoffMs, sim: 0, broker: 0 }];
+  let algoEq = 0, brEq = 0;
+  const out = [{ ts: cutoffMs, algo: 0, broker: 0 }];
   for (const e of events) {
-    if (e.kind === 'sim')    simEq += e.pnl;
-    if (e.kind === 'broker') brEq  += e.pnl;
-    out.push({ ts: e.ts, sim: simEq, broker: brEq });
+    if (e.kind === 'algo')   algoEq += e.pnl;
+    if (e.kind === 'broker') brEq   += e.pnl;
+    out.push({ ts: e.ts, algo: algoEq, broker: brEq });
   }
   return out;
 }
