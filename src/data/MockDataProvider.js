@@ -116,7 +116,13 @@ export function useSlotData(runnerId, slotIdx) {
     }).catch(console.error);
   }, [runnerId, slotIdx]);
 
-  // Initial fetch — full historical via REST.
+  // Initial fetch — full historical via REST. Split into a fast
+  // quartet (trades/broker/decisions/audit -- short JSONL tails)
+  // and a slow loner (bars -- 24h cold-cache aggregation can take
+  // 30s+ on the first load of the day). Render as soon as the
+  // quartet lands; bars merge in when ready, so the slot view
+  // doesn't sit at "Loading slot N..." for half a minute waiting
+  // on the bars endpoint to finish decoding DBN files.
   useEffect(() => {
     if (!runnerId || slotIdx == null) return;
     let cancelled = false;
@@ -127,16 +133,26 @@ export function useSlotData(runnerId, slotIdx) {
       cache.delete(slotFileUrl(runnerId, slotIdx, f));
     });
     Promise.all([
-      loadJsonl(slotFileUrl(runnerId, slotIdx, 'bars.jsonl')),
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'trades.jsonl')),
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'broker_truth.jsonl')),
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'decisions.jsonl')),
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'audit.jsonl'))
         .catch(() => []),    // mock fixtures may not have audit
-    ]).then(([bars, trades, broker, decisions, audit]) => {
+    ]).then(([trades, broker, decisions, audit]) => {
       if (cancelled) return;
-      setData({ bars, trades, broker, decisions, audit });
+      setData({ bars: [], trades, broker, decisions, audit });
     }).catch(console.error);
+    // Slow loner: bars. Merge in when ready; the chart renders empty
+    // until then. If bars finish FIRST (e.g. cache hit) and the
+    // quartet hasn't arrived yet, seed an otherwise-empty data shape
+    // so we don't lose them.
+    loadJsonl(slotFileUrl(runnerId, slotIdx, 'bars.jsonl'))
+      .then(bars => {
+        if (cancelled) return;
+        setData(prev => prev
+          ? { ...prev, bars }
+          : { bars, trades: [], broker: [], decisions: [], audit: [] });
+      }).catch(console.error);
     return () => { cancelled = true; };
   }, [runnerId, slotIdx]);
 
