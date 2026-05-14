@@ -515,14 +515,13 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   if (brokerTrade?.exit_px)  { pmin = Math.min(pmin, brokerTrade.exit_px);  pmax = Math.max(pmax, brokerTrade.exit_px); }
   if (algoTrade?.entry_px)   { pmin = Math.min(pmin, algoTrade.entry_px);   pmax = Math.max(pmax, algoTrade.entry_px); }
   if (algoTrade?.exit_px)    { pmin = Math.min(pmin, algoTrade.exit_px);    pmax = Math.max(pmax, algoTrade.exit_px); }
-  // Entry must be in band (the trade's center of gravity); TT
-  // (trail-arm) likewise -- it represents the move size we expect.
-  // SL + TP do NOT extend the y-range -- they may be far away
-  // (wide stops, generous TPs) and stretching the band for them
-  // would compress the meaningful tick action into a sliver. They
-  // render only when their price is already inside the band.
-  if (entryPx) { pmin = Math.min(pmin, entryPx); pmax = Math.max(pmax, entryPx); }
-  if (tsPx)    { pmin = Math.min(pmin, tsPx);    pmax = Math.max(pmax, tsPx); }
+  // No bracket-line extension. Y-range is determined by ticks alone;
+  // entry / TT / SL / TP all render conditionally on already being
+  // in band. At default zoom the window is centered on the trade so
+  // entry naturally falls in the tick-derived range; when the
+  // operator zooms into a tight region (e.g. trail-trigger moment
+  // 30+ ticks away from entry), bracket lines outside that region
+  // simply hide -- they don't compress the area being studied.
   const pad = (pmax - pmin) * 0.05 || 0.5;
   pmin -= pad; pmax += pad;
   const xT = (ts) => x0 + (x1 - x0) * (ts - fromNs) / (toNs - fromNs);
@@ -550,17 +549,18 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     ctx.fillText(lbl, x, y1 + 4);
   }
 
-  // Bracket lines: entry / TT always render (their prices contribute
-  // to y-range so always in-band); SL / TP only render when their
-  // price already sits inside the band -- skipped silently otherwise.
-  // Colors match the entry-triangle / summary-KV palette so long vs
-  // short reads at a glance and the TT/SL/TP labels self-explain.
+  // Bracket lines: render only when their price is already inside
+  // the (tick-derived) y-band. Forcing entry/TT into range was useful
+  // for the static view but fights the operator the moment they zoom
+  // into a region away from those prices. All four lines now follow
+  // the same in-band rule -- colors match the entry-triangle /
+  // summary-KV palette so long vs short reads at a glance.
   const entryColor = side === 'long' ? '#1976d2' : '#ffff00';
-  const inBand = (p) => p != null && p >= pmin && p <= pmax;
-  drawHLine(ctx, x0, x1, yP, entryPx, entryColor, `entry ${entryPx?.toFixed(2)}`);
-  drawHLine(ctx, x0, x1, yP, tsPx,    '#fb923c', tsPx ? `TT ${tsPx.toFixed(2)}` : null);
-  if (inBand(slPx)) drawHLine(ctx, x0, x1, yP, slPx, '#ef5350', `SL ${slPx.toFixed(2)}`);
-  if (inBand(tpPx)) drawHLine(ctx, x0, x1, yP, tpPx, '#7fff00', `TP ${tpPx.toFixed(2)}`);
+  const inBand = (p) => p != null && Number.isFinite(p) && p >= pmin && p <= pmax;
+  if (inBand(entryPx)) drawHLine(ctx, x0, x1, yP, entryPx, entryColor, `entry ${entryPx.toFixed(2)}`);
+  if (inBand(tsPx))    drawHLine(ctx, x0, x1, yP, tsPx,    '#fb923c',  `TT ${tsPx.toFixed(2)}`);
+  if (inBand(slPx))    drawHLine(ctx, x0, x1, yP, slPx,    '#ef5350',  `SL ${slPx.toFixed(2)}`);
+  if (inBand(tpPx))    drawHLine(ctx, x0, x1, yP, tpPx,    '#7fff00',  `TP ${tpPx.toFixed(2)}`);
 
   // bid line (cyan-ish, like playground) and ask (amber)
   drawLine(ctx, ticks, xT, yP, 'bid', '#7fc6d4');
