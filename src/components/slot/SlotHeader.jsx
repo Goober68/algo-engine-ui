@@ -8,6 +8,7 @@ import { useMemo, useState } from 'react';
 import { runnerControl } from '../../data/commands';
 import { useActiveCoord } from '../../data/coords';
 import { useBrokerTruthStatus } from '../../data/brokerTruthClient';
+import SlotConfigDrawer from './SlotConfigDrawer';
 
 // Stale threshold matches coord's poll_interval_sec (60s) + one tick of
 // slack -- inside this window we trust the displayed broker $; outside,
@@ -22,6 +23,7 @@ export default function SlotHeader({ slotMeta, data }) {
   const coord = useActiveCoord('runners');
   const truth = useBrokerTruthStatus(slotMeta.account, coord?.url);
   const truthHealth = classifyTruth(truth);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const fireToast = (text, ok = true) => {
     setToast({ text, ok });
@@ -72,12 +74,21 @@ export default function SlotHeader({ slotMeta, data }) {
 
       <div className="ml-auto flex gap-1">
         <Btn label="Reconcile" icon="↺" disabled={busy != null} onClick={reconcile} />
-        <Btn label="Config"    icon="⚙" disabled={true} title="Per-slot config edit — Pass C" />
+        <Btn label="Config"    icon="⚙" onClick={() => setConfigOpen(true)}
+             title="Edit this slot's strategy config" />
       </div>
       {toast && (
         <div className={`absolute -bottom-2 right-3 translate-y-full text-[11px] px-2 py-0.5 rounded shadow z-10 ${
           toast.ok ? 'bg-long/90 text-bg' : 'bg-short/90 text-bg'
         }`}>{toast.text}</div>
+      )}
+      {configOpen && (
+        <SlotConfigDrawer
+          runnerId={id}
+          slotIdx={slotMeta.slot_idx}
+          account={slotMeta.account}
+          onClose={() => setConfigOpen(false)}
+        />
       )}
     </div>
   );
