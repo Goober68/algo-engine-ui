@@ -79,13 +79,24 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
   //   ad-hoc bar click: bar_open ± 30s + a 3-min bar's worth of right-
   //                pad. Wider so the operator gets a meaningful chunk
   //                of price action around the bar they clicked.
+  // Then a min-span clamp: short scalps (~1-5s) used to open onto a
+  // ~10s window, which (a) showed almost no context and (b) sat
+  // below the 30s trade-print gate so dots were always hidden. Pad
+  // symmetrically out to MIN_SPAN_NS so the operator opens onto
+  // enough air around the trade to see what was happening.
+  const MIN_SPAN_NS = 40 * 1_000_000_000;
   const adHocAnchor = trade?.ad_hoc;
-  const fromNs = adHocAnchor
+  let fromNs = adHocAnchor
     ? trade.entry_ts - 30 * 1_000_000_000
     : (trade?.entry_ts ? trade.entry_ts - PRE_PAD_NS : 0);
-  const toNs = adHocAnchor
+  let toNs = adHocAnchor
     ? trade.entry_ts + 210 * 1_000_000_000
     : (trade?.exit_ts ? trade.exit_ts + POST_PAD_NS : (trade?.entry_ts || 0) + PRE_PAD_NS);
+  if (toNs - fromNs < MIN_SPAN_NS) {
+    const pad = (MIN_SPAN_NS - (toNs - fromNs)) / 2;
+    fromNs -= pad;
+    toNs += pad;
+  }
 
   useEffect(() => {
     if (!trade) return;
@@ -212,20 +223,45 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
 
   if (!trade) return null;
 
-  // Derive SL/TP prices from matching decision (if available).
+  // Derive SL/TP/TS prices for chart bracket lines + summary KVs.
   // Ad-hoc mode = a chart-bar click on a bar with no trade. The
   // modal still opens (so the operator can inspect ticks for any
   // bar) but with all trade-anchored chrome suppressed -- ticks
   // are the only payload.
+  //
+  // Bracket source preference: algo decision > audit POST request.
+  //   - decision (when available) carries the strategy's intended
+  //     bracket in tick form -- cleanest source
+  //   - audit fallback covers broker_only rows (no matching algo
+  //     trade, e.g. cap-suppressed sim or relay-side reorder where
+  //     the runner didn't emit). The audit IS the order placement,
+  //     so its sl/tp/trail params reflect what the broker armed on.
+  //   - neither = truly manual broker fill, no bracket lines drawn.
+  // Broker fills don't carry bracket fields directly -- only orders
+  // (audits) do -- so this is the only fallback path.
+  //
+  // Anchor price preference: algo entry_px > broker entry_px > focal.
+  //   - algo entry_px = the limit price the order targeted = what the
+  //     algo's intended SL is anchored on
+  //   - broker entry_px = actual fill (slippage relative to algo)
+  //   - focal = whichever the user clicked on
+  // For broker_only trades, anchor falls through to broker entry_px.
   const adHoc = !!trade.ad_hoc;
   const isLong = trade.side === 'long';
   const dir = isLong ? 1 : -1;
-  const slPx = !adHoc && decision?.sl_ticks
-    ? trade.entry_px - dir * decision.sl_ticks * TICK : null;
-  const tpPx = !adHoc && decision?.tp_ticks
-    ? trade.entry_px + dir * decision.tp_ticks * TICK : null;
-  const tsPx = !adHoc && decision?.trail_trigger_ticks
-    ? trade.entry_px + dir * decision.trail_trigger_ticks * TICK : null;
+  const bracketSrc = !adHoc && (decision || (audit?.request ? {
+    sl_ticks:           Number(audit.request.stop_loss     ?? 0) || null,
+    tp_ticks:           Number(audit.request.take_profit   ?? 0) || null,
+    trail_trigger_ticks: Number(audit.request.trail_trigger ?? 0) || null,
+    trail_dist_ticks:    Number(audit.request.trail_dist    ?? 0) || null,
+  } : null));
+  const anchorPx = algoTrade?.entry_px ?? brokerTrade?.entry_px ?? trade?.entry_px;
+  const slPx = bracketSrc?.sl_ticks
+    ? anchorPx - dir * bracketSrc.sl_ticks * TICK : null;
+  const tpPx = bracketSrc?.tp_ticks
+    ? anchorPx + dir * bracketSrc.tp_ticks * TICK : null;
+  const tsPx = bracketSrc?.trail_trigger_ticks
+    ? anchorPx + dir * bracketSrc.trail_trigger_ticks * TICK : null;
 
   return (
     <div
@@ -272,9 +308,9 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           <div className="grid grid-cols-3 gap-x-6 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
             <div className="space-y-1">
               <KV k="trade" v={fmtTradeSpec(trade, audit)} cls={isLong ? 'text-buy' : 'text-sell'} />
-              <KV k="TP"    v={fmtTicksAbs(decision?.tp_ticks, tpPx)}  cls="text-tp" />
-              <KV k="SL"    v={fmtTicksAbs(decision?.sl_ticks, slPx)}  cls="text-sl" />
-              <KV k="TT"    v={fmtTrailAbs(decision, tsPx)}            cls="text-trail" />
+              <KV k="TP"    v={fmtTicksAbs(bracketSrc?.tp_ticks, tpPx)}  cls="text-tp" />
+              <KV k="SL"    v={fmtTicksAbs(bracketSrc?.sl_ticks, slPx)}  cls="text-sl" />
+              <KV k="TT"    v={fmtTrailAbs(bracketSrc, tsPx)}            cls="text-trail" />
             </div>
             <div className="space-y-1">
               <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
