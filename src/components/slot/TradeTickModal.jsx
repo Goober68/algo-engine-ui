@@ -517,21 +517,26 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   const y0 = PAD.top,  y1 = cssH - PAD.bottom;
 
   // Y range: include all bid/ask + entry + exit + SL.
-  // Recompute y-range from ticks WITHIN the visible window so zoom
-  // auto-rescales price. (Static range over all data was useless when
-  // zooming in on a 1s span -- price collapsed into a sliver.)
+  // Recompute y-range from quote ticks WITHIN the visible window so
+  // zoom auto-rescales price. (Static range over all data was useless
+  // when zooming in on a 1s span -- price collapsed into a sliver.)
+  // Trade prints (kind:'trade') aren't included in the range -- their
+  // price is by definition between bid/ask of their moment, so the
+  // bid/ask sweep already covers them.
   let pmin = Infinity, pmax = -Infinity;
   for (const t of ticks) {
+    if (t.kind === 'trade') continue;
     if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
     if (t.bid < pmin) pmin = t.bid;
     if (t.bid > pmax) pmax = t.bid;
     if (t.ask < pmin) pmin = t.ask;
     if (t.ask > pmax) pmax = t.ask;
   }
-  // Fallback: zoomed-in window may have zero ticks (sparse periods);
+  // Fallback: zoomed-in window may have zero quotes (sparse periods);
   // use the un-windowed range so the chart still renders something.
   if (!Number.isFinite(pmin)) {
     for (const t of ticks) {
+      if (t.kind === 'trade') continue;
       if (t.bid < pmin) pmin = t.bid;
       if (t.bid > pmax) pmax = t.bid;
       if (t.ask < pmin) pmin = t.ask;
@@ -575,7 +580,10 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   // `:NN` so the operator can see "where am I within the second"
   // and "when did the second roll over" without doing math.
   const spanNs = toNs - fromNs;
-  const targetN = 8;
+  // 12 = at the 1s zoom floor we get 100ms-step grid (1s/100ms=10 <= 12).
+  // Was 8 -- gave 200ms steps at full zoom, less useful for tick-scale
+  // FillModel investigation.
+  const targetN = 12;
   const NICE_STEPS_NS = [
     10_000_000, 20_000_000, 50_000_000,             // 10/20/50ms
     100_000_000, 200_000_000, 500_000_000,          // 100/200/500ms
@@ -615,6 +623,31 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   // bid line (cyan-ish, like playground) and ask (amber)
   drawLine(ctx, ticks, xT, yP, 'bid', '#7fc6d4');
   drawLine(ctx, ticks, xT, yP, 'ask', '#d4be7a');
+  // Trade prints (kind:'trade' records) -- one filled dot per print.
+  // Color = aggressor:
+  //   side=B (bid was hit -> aggressive seller) -> red dot
+  //   side=A (ask was hit -> aggressive buyer)  -> green dot
+  //   side=N (not classified)                   -> grey dot
+  // Radius scales with log(size) so a 1-lot is small and a 50-lot
+  // jumps. Black halo so the dot stays legible over busy quote lines.
+  for (const t of ticks) {
+    if (t.kind !== 'trade') continue;
+    if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
+    if (t.price < pmin || t.price > pmax) continue;
+    const cx = xT(t.ts_ns), cy = yP(t.price);
+    const r = Math.max(2, Math.min(6, 2 + Math.log2((t.size || 1) + 1)));
+    const fill = t.side === 'B' ? '#ef5350'
+              : t.side === 'A' ? '#7fff00'
+              :                  '#7c8190';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
 
   // Broker entry/exit (solid) — the ground truth for what executed.
   // Skip when no broker counterpart exists (algo-only trade -- runner
@@ -677,6 +710,8 @@ function drawLine(ctx, ticks, xT, yP, key, color) {
   ctx.beginPath();
   let started = false;
   for (const t of ticks) {
+    if (t.kind === 'trade') continue;     // trades are drawn as dots
+    if (t[key] == null) continue;
     const x = xT(t.ts_ns), y = yP(t[key]);
     if (!started) { ctx.moveTo(x, y); started = true; }
     else ctx.lineTo(x, y);
