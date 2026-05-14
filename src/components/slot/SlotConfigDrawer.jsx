@@ -30,6 +30,26 @@ import {
 
 const STRATEGY = 'xovd_v1';
 
+// Meta / deployment fields that live IN the per-slot config row but
+// are NOT in xovd_v1_schema.json's sections (which only cover strategy
+// params). Pinned to the top of the drawer so users can see + edit
+// the slot's identity at a glance. Layer 1 only -- relay/.env infra
+// (Layer 2) and coord-registry rows (Layer 3) are out of scope per
+// Niall direction.
+const META_FIELDS = [
+  { name: 'account',  label: 'Account',   type: 'string',
+    tooltip: 'Broker account this slot trades against.' },
+  { name: 'algoId',   label: 'Algo ID',   type: 'string',
+    tooltip: 'Identifier the relay uses to route this slot\'s POSTs.' },
+  { name: 'broker',   label: 'Broker',    type: 'enum', values: ['tradovate'],
+    tooltip: 'Broker the relay forwards orders to.' },
+  { name: 'symbol',   label: 'Symbol',    type: 'string',
+    tooltip: 'Tradable symbol (e.g. MNQ1!).' },
+  { name: 'live',     label: 'Live',      type: 'bool',
+    tooltip: 'When false the slot runs dry -- no POSTs to the relay.' },
+];
+const META_KEYS = new Set(META_FIELDS.map(f => f.name));
+
 export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }) {
   const [schema, setSchema]     = useState(null);
   const [baseline, setBaseline] = useState(null);   // immutable; runner's deployed values
@@ -74,11 +94,16 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
   }, [values, baseline]);
 
   const onChange = (key, raw) => {
-    if (!schema) return;
-    const def = schema.params[key];
-    if (!def) return;
-    const v = (def.type === 'int') ? parseInt(raw, 10)
-            : (def.type === 'float') ? parseFloat(raw)
+    // Coerce based on the schema's type for known params, or the
+    // META_FIELDS entry's type for the pinned identity row.
+    let type = schema?.params?.[key]?.type;
+    if (!type) {
+      const meta = META_FIELDS.find(f => f.name === key);
+      type = meta?.type;
+    }
+    if (!type) return;
+    const v = (type === 'int') ? parseInt(raw, 10)
+            : (type === 'float') ? parseFloat(raw)
             : raw;
     setValues(prev => ({ ...prev, [key]: v }));
   };
@@ -115,6 +140,24 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
           )}
           {!err && (!schema || !values) && (
             <div className="p-4 text-xs text-muted">loading…</div>
+          )}
+          {schema && values && (
+            <SchemaSection id="slotcfg.meta" title="Slot identity"
+                           badge={metaDirtyBadge(META_FIELDS, dirtyKeys)}
+                           defaultOpen>
+              {META_FIELDS.map(def => {
+                const isDirty = dirtyKeys.has(def.name);
+                return (
+                  <RowFrame key={def.name} dirty={isDirty} restart={false}>
+                    <ParamRow
+                      schemaField={def}
+                      value={values[def.name]}
+                      onChange={v => onChange(def.name, v)}
+                    />
+                  </RowFrame>
+                );
+              })}
+            </SchemaSection>
           )}
           {schema && values && sections.map(sec => (
             <SchemaSection key={sec.id}
@@ -219,10 +262,13 @@ function RowFrame({ children, dirty, restart }) {
 // Walk schema.sections, keeping every key that has a schema definition.
 // Unlike the playground we don't filter by `sweepable` -- the user
 // editing a live slot wants to see EVERY tunable param the runner is
-// using, not just the ones we'd sweep.
+// using, not just the ones we'd sweep. Anything in schema.params but
+// NOT placed in a section gets caught by an "Other" appendix at the
+// bottom so no live-config field is invisible.
 function groupBySection(schema) {
   if (!schema) return [];
   const out = [];
+  const placed = new Set();
   for (const sec of (schema.sections || [])) {
     const fields = [];
     for (const row of (sec.rows || [])) {
@@ -231,9 +277,14 @@ function groupBySection(schema) {
         if (!key) continue;
         if (!schema.params[key]) continue;
         fields.push(key);
+        placed.add(key);
       }
     }
     if (fields.length) out.push({ id: sec.id, title: sec.title, fields });
+  }
+  const orphans = Object.keys(schema.params || {}).filter(k => !placed.has(k));
+  if (orphans.length) {
+    out.push({ id: 'other', title: 'Other', fields: orphans.sort() });
   }
   return out;
 }
@@ -242,6 +293,12 @@ function dirtyCountForSection(sec, dirtyKeys) {
   let n = 0;
   for (const k of sec.fields) if (dirtyKeys.has(k)) n++;
   return n > 0 ? `${sec.fields.length} · ${n} edited` : `${sec.fields.length}`;
+}
+
+function metaDirtyBadge(metaFields, dirtyKeys) {
+  let n = 0;
+  for (const f of metaFields) if (dirtyKeys.has(f.name)) n++;
+  return n > 0 ? `${metaFields.length} · ${n} edited` : `${metaFields.length}`;
 }
 
 function shallowEq(a, b) {
