@@ -14,7 +14,7 @@
 // Hooks consumed by components: useRunners, useRunner(id),
 // useRunnersRegistry, useRunMeta(id), useSlotData(id, n).
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { subscribe, SSE_ENABLED } from './eventBus';
 import { activeCoordFor, listCoords } from './coords';
 
@@ -101,6 +101,20 @@ export function useRunMeta(runnerId) {
 
 export function useSlotData(runnerId, slotIdx) {
   const [data, setData] = useState(null);
+  const tradesRefetchTimer = useRef(null);
+
+  // Trades are derived server-side by pairing fill events from the
+  // decisions log -- so the UI re-fetches /trades whenever a fill
+  // SSE arrives. Debounced so a TP+exit pair (~1 ms apart in tick
+  // time) collapses into one HTTP roundtrip.
+  const refetchTrades = useCallback(() => {
+    if (!runnerId || slotIdx == null) return;
+    const path = slotFileUrl(runnerId, slotIdx, 'trades.jsonl');
+    cache.delete(path);
+    loadJsonl(path).then(trades => {
+      setData(prev => prev ? { ...prev, trades } : prev);
+    }).catch(console.error);
+  }, [runnerId, slotIdx]);
 
   // Initial fetch — full historical via REST.
   useEffect(() => {
@@ -137,6 +151,14 @@ export function useSlotData(runnerId, slotIdx) {
   // No-op in mock mode (SSE_ENABLED=false).
   const onDecision = useCallback((evt) => {
     const d = evt.data;
+    // Fill events trigger a debounced trades-refetch -- coord derives
+    // /trades from the same fill stream, so an entry or exit fill is
+    // exactly when the trades view changes. 200ms debounce lets the
+    // exit-side fill catch up to its entry-side partner.
+    if (d && d.type === 'fill') {
+      if (tradesRefetchTimer.current) clearTimeout(tradesRefetchTimer.current);
+      tradesRefetchTimer.current = setTimeout(refetchTrades, 200);
+    }
     if (!d || d.type !== 'decision') return;
     setData(prev => {
       if (!prev) return prev;
