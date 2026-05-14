@@ -716,37 +716,54 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     const spanSec = spanNs / 1e9;
     const zoomBoost = 2 * Math.log10(30 / Math.max(0.001, spanSec));
     const baseR = Math.max(1.5, Math.min(8, 2 + zoomBoost));
-    // Bucket by rounded (cx, cy, side) -- pixel position, not raw
-    // ts_ns. Exchange matching engines give every leg of a sweep
-    // its own monotonic ts_event in nanoseconds, so a (ts_ns, px)
-    // key almost never merges anything. But at any practical zoom
-    // those microsecond-apart legs land on the same screen pixel,
-    // so they SHOULD merge -- otherwise the alpha just compounds
-    // visually instead of being reflected in dot size. Side stays
-    // in the key so a B-leg and A-leg landing on the same pixel
-    // don't get color-blended into nonsense.
+    // Bucket on a coarse pixel grid (BUCKET_PX) -- not raw ts_ns,
+    // not single pixels. Exchange matching engines give every leg
+    // of a sweep its own monotonic ts_event in nanoseconds, so a
+    // (ts_ns, px) key almost never merges anything. Single-pixel
+    // bucketing helped a little but small dots still visually
+    // overlap across a few pixels, so the alpha compounds instead
+    // of the radius growing. An 8px grid groups "things the eye
+    // sees as the same dot" at any reasonable zoom. Side stays in
+    // the key so a B-leg and A-leg in the same cell don't get
+    // color-blended into nonsense.
+    //
+    // Draw position is the size-weighted centroid of the cell --
+    // honest about where the volume actually was rather than
+    // snapping to the cell center.
+    const BUCKET_PX = 8;
     const buckets = new Map();
     for (const t of ticks) {
       if (t.kind !== 'trade') continue;
       if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
       if (t.price < pmin || t.price > pmax) continue;
-      const cx = Math.round(xT(t.ts_ns));
-      const cy = Math.round(yP(t.price));
-      const key = `${cx}|${cy}|${t.side}`;
+      const cxR = xT(t.ts_ns), cyR = yP(t.price);
+      const bx = Math.round(cxR / BUCKET_PX);
+      const by = Math.round(cyR / BUCKET_PX);
+      const key = `${bx}|${by}|${t.side}`;
+      const sz = t.size || 0;
+      const w  = sz || 1;
       const cur = buckets.get(key);
-      if (cur) cur.size += (t.size || 0);
-      else buckets.set(key, { cx, cy, side: t.side, size: (t.size || 0) });
+      if (cur) {
+        cur.size  += sz;
+        cur.sumX  += cxR * w;
+        cur.sumY  += cyR * w;
+        cur.wsum  += w;
+      } else {
+        buckets.set(key, { sumX: cxR * w, sumY: cyR * w, wsum: w, side: t.side, size: sz });
+      }
     }
     for (const t of buckets.values()) {
       // sqrt scale -- log2 was too flat to read past tiny clusters.
       // sz=1 -> +0.5, sz=16 -> +2, sz=100 -> +5, capped at +6 so a
       // monster cluster doesn't blot out the rest of the chart.
       const r = baseR + Math.min(6, Math.sqrt(t.size || 1) * 0.5);
+      const cx = t.sumX / t.wsum;
+      const cy = t.sumY / t.wsum;
       ctx.fillStyle = t.side === 'B' ? 'rgba(239,83,80,0.5)'
                     : t.side === 'A' ? 'rgba(127,255,0,0.5)'
                     :                  'rgba(124,129,144,0.5)';
       ctx.beginPath();
-      ctx.arc(t.cx, t.cy, r, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
     }
   }
