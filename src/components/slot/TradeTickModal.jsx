@@ -109,44 +109,49 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
       setTicks([]);
       return;
     }
-    // Tier 1: coord's in-memory ring buffer (fast, recent ~4h).
-    fetch(`${COORD}/tick_history?from_ns=${fromNs}&to_ns=${toNs}`)
-      .then(r => r.text())
-      .then(text => {
-        if (cancelled) return;
-        const arr = parseTickNdjson(text);
-        if (arr.length > 0) {
-          setSource('coord');
+    // Tier 1: archive sidecar (DBN files, includes BOTH quotes AND
+    // trade prints from MBP1 action='T' records). Coord's live ring
+    // only sees the upstream's bid/ask CSV (no trades), so we'd lose
+    // the tape coloration if we used coord first. Sidecar covers
+    // anything older than the current incomplete UTC hour.
+    const tryArchive = () => {
+      if (!ARCHIVE) return Promise.resolve(null);
+      setSource('archive-loading');
+      return fetch(`${ARCHIVE}/tick_history?from_ns=${fromNs}&to_ns=${toNs}`)
+        .then(r => r.text())
+        .then(text => {
+          if (cancelled) return null;
+          const arr = parseTickNdjson(text);
+          if (!arr.length) return null;
+          setSource('archive');
           setTicks(arr);
-          tickCacheSet(cacheKey, { ticks: arr, source: 'coord' });
-          return;
-        }
-        // Tier 2: archive sidecar (slower, longer-history). Skipped
-        // when not configured — modal falls through to "no ticks".
-        if (!ARCHIVE) {
-          setTicks([]);
-          return;
-        }
-        setSource('archive-loading');
-        return fetch(`${ARCHIVE}/tick_history?from_ns=${fromNs}&to_ns=${toNs}`)
-          .then(r => r.text())
-          .then(text2 => {
-            if (cancelled) return;
-            const arr2 = parseTickNdjson(text2);
-            const src = arr2.length > 0 ? 'archive' : null;
-            setSource(src);
-            setTicks(arr2);
-            if (arr2.length > 0) {
-              tickCacheSet(cacheKey, { ticks: arr2, source: 'archive' });
-            }
-          })
-          .catch(e => {
-            if (cancelled) return;
-            setErr(`archive: ${String(e)}`);
-            setTicks([]);
-          });
-      })
-      .catch(e => { if (!cancelled) { setErr(String(e)); setTicks([]); } });
+          tickCacheSet(cacheKey, { ticks: arr, source: 'archive' });
+          return arr;
+        })
+        .catch(e => { if (!cancelled) setErr(`archive: ${String(e)}`); return null; });
+    };
+    // Tier 2: coord's live ring (~4h, quotes only). Used when the
+    // archive doesn't cover the window yet (sub-hour-old trades the
+    // DBN file hasn't been written for).
+    const tryCoord = () => {
+      return fetch(`${COORD}/tick_history?from_ns=${fromNs}&to_ns=${toNs}`)
+        .then(r => r.text())
+        .then(text => {
+          if (cancelled) return;
+          const arr = parseTickNdjson(text);
+          const src = arr.length > 0 ? 'coord' : null;
+          setSource(src);
+          setTicks(arr);
+          if (arr.length > 0) {
+            tickCacheSet(cacheKey, { ticks: arr, source: 'coord' });
+          }
+        })
+        .catch(e => { if (!cancelled) { setErr(`coord: ${String(e)}`); setTicks([]); } });
+    };
+    tryArchive().then(arr => {
+      if (cancelled || arr) return;
+      return tryCoord();
+    });
     return () => { cancelled = true; };
   }, [trade?.entry_ts, fromNs, toNs]);
 
