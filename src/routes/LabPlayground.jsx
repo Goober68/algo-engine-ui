@@ -8,6 +8,7 @@ import { fetchStrategySchema } from '../data/strategySchema';
 import { fetchSessionBars, getDefaults, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
 import SchemaSection from '../components/schema/SchemaSection';
 import ParamRow from '../components/schema/ParamRow';
+import SavedConfigs from '../components/schema/SavedConfigs';
 import { paramActive } from '../components/schema/schemaLabels';
 import ChartPane from '../components/slot/ChartPane';
 import Splitter from '../components/chrome/Splitter';
@@ -165,7 +166,16 @@ export default function LabPlayground() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <Toolbar wsStatus={wsStatus} runWallMs={runWallMs} runError={runError} onRun={triggerRun} />
+      <Toolbar wsStatus={wsStatus} runWallMs={runWallMs} runError={runError} onRun={triggerRun}
+               schema={schema} values={values}
+               onLoadConfig={(cfg) => {
+                 // Replace values with the saved config's, then re-RUN.
+                 const next = { ...values, ...(cfg.values || {}) };
+                 setValues(next);
+                 writeAutosave(next);
+                 if (debounceRef.current) clearTimeout(debounceRef.current);
+                 debounceRef.current = setTimeout(triggerRun, RUN_DEBOUNCE_MS);
+               }} />
       <div className="flex-1 min-h-0 flex">
         <SliderPanel
           schema={schema}
@@ -206,8 +216,8 @@ export default function LabPlayground() {
 // reference screenshot and is a typical futures-account size.
 const STARTING_BAL = 50_000;
 
-// ── Toolbar (session status + manual Run button + last-run timing) ──
-function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
+// ── Toolbar (session status + saved-configs + manual Run + timing) ──
+function Toolbar({ wsStatus, runWallMs, runError, onRun, schema, values, onLoadConfig }) {
   const statusCls = wsStatus === 'ready'
     ? 'bg-long/20 text-long border-long/40'
     : wsStatus === 'connecting'
@@ -226,21 +236,26 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
           {sess.runs_count} runs
         </span>
       )}
-      <button
-        onClick={onRun}
-        disabled={wsStatus !== 'ready'}
-        className="ml-auto px-3 py-0.5 rounded bg-accent/20 text-accent border border-accent/40 hover:bg-accent/30 disabled:opacity-30"
-      >
-        Run
-      </button>
-      {runWallMs != null && (
-        <span className="text-muted text-[11px] tnum">last {runWallMs.toFixed(0)} ms</span>
-      )}
-      {(runError || (wsStatus === 'error' && startErr)) && (
-        <span className="text-short text-[11px]" title={runError || startErr}>
-          {wsStatus === 'error' ? 'session error' : 'run error'}
-        </span>
-      )}
+      <span className="ml-auto flex items-center gap-2">
+        {(runError || (wsStatus === 'error' && startErr)) && (
+          <span className="text-short text-[11px]" title={runError || startErr}>
+            {wsStatus === 'error' ? 'session error' : 'run error'}
+          </span>
+        )}
+        {runWallMs != null && (
+          <span className="text-muted text-[11px] tnum">last {runWallMs.toFixed(0)} ms</span>
+        )}
+        {schema && values && (
+          <SavedConfigs strategy={STRATEGY} currentValues={values} onLoad={onLoadConfig} />
+        )}
+        <button
+          onClick={onRun}
+          disabled={wsStatus !== 'ready'}
+          className="px-3 py-0.5 rounded bg-accent/20 text-accent border border-accent/40 hover:bg-accent/30 disabled:opacity-30"
+        >
+          Run
+        </button>
+      </span>
     </div>
   );
 }

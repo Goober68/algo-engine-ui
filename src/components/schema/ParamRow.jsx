@@ -111,9 +111,9 @@ function NumberInput({ def, value, onChange, disabled }) {
   );
 }
 
-// Slim pill toggle: track 28x14, thumb 10x10. Accent-blue when on
-// (was bright teal, which read as gaudy on the dark panel). Borderless
-// thumb keeps the silhouette clean.
+// iOS-style switch matching Niall's reference: track 36x20, thumb
+// 16x16 with 2px padding so when on the thumb hugs the right edge
+// (no green visible to the right of it). Green = on, dark = off.
 function BoolToggle({ value, onChange, disabled }) {
   const on = !!value;
   return (
@@ -125,15 +125,15 @@ function BoolToggle({ value, onChange, disabled }) {
       disabled={disabled}
       title={on ? 'on' : 'off'}
       className={
-        'relative w-7 h-3.5 rounded-full transition-colors ' +
-        (on ? 'bg-accent/70' : 'bg-panel border border-border') +
+        'relative w-9 h-5 rounded-full transition-colors shrink-0 ' +
+        (on ? 'bg-long' : 'bg-bg border border-border') +
         ' disabled:opacity-40 disabled:cursor-not-allowed'
       }
     >
       <span
         className={
-          'absolute top-[2px] w-2.5 h-2.5 rounded-full bg-text transition-transform ' +
-          (on ? 'translate-x-[14px]' : 'translate-x-[2px]')
+          'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ' +
+          (on ? 'translate-x-[18px]' : 'translate-x-0.5')
         }
       />
     </button>
