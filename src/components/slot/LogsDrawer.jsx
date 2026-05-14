@@ -126,11 +126,13 @@ function ProcessLogPane({ runnerId, kind }) {
   };
   return (
     <div ref={ref} onScroll={onScroll}
-         className="flex-1 overflow-y-auto p-2 text-[11px] font-mono text-muted leading-tight whitespace-pre">
+         className="flex-1 overflow-y-auto overflow-x-hidden p-2 text-[11px] font-mono text-muted leading-tight">
       {lines.length === 0
         ? <span className="italic">no {kind} lines yet</span>
         : lines.map((l, i) => (
-            <div key={i} className={logLineCls(l, kind)}>{l || ' '}</div>
+            <div key={i} className={'truncate ' + logLineCls(l, kind)} title={l || undefined}>
+              {l || ' '}
+            </div>
           ))
       }
     </div>
