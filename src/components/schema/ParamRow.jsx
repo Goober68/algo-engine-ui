@@ -111,9 +111,10 @@ function NumberInput({ def, value, onChange, disabled }) {
   );
 }
 
-// iOS-style switch matching Niall's reference: track 36x20, thumb
-// 16x16 with 2px padding so when on the thumb hugs the right edge
-// (no green visible to the right of it). Green = on, dark = off.
+// Compact iOS-style switch: 28x16 track, 12x12 thumb. Thumb is
+// absolutely positioned with explicit `left` (was buggy translate-x
+// off a left:auto baseline -- showed phantom second blob outside
+// the track). Green = on, dark-with-border = off.
 function BoolToggle({ value, onChange, disabled }) {
   const on = !!value;
   return (
@@ -125,15 +126,15 @@ function BoolToggle({ value, onChange, disabled }) {
       disabled={disabled}
       title={on ? 'on' : 'off'}
       className={
-        'relative w-9 h-5 rounded-full transition-colors shrink-0 ' +
+        'relative w-7 h-4 rounded-full shrink-0 transition-colors ' +
         (on ? 'bg-long' : 'bg-bg border border-border') +
         ' disabled:opacity-40 disabled:cursor-not-allowed'
       }
     >
       <span
         className={
-          'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ' +
-          (on ? 'translate-x-[18px]' : 'translate-x-0.5')
+          'absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ' +
+          (on ? 'left-[14px]' : 'left-0.5')
         }
       />
     </button>
