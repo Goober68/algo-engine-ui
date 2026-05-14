@@ -28,6 +28,7 @@ export default function LabPlayground() {
   const [trades, setTrades]       = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [runWallMs, setRunWallMs] = useState(null);
+  const [runInFlight, setRunInFlight] = useState(false);
   const [selectedTradeKey, setSelectedTradeKey] = useState(null);   // entry_ts in ns; clicked-trade sync between equity panel + chart
   const [sliderWidth, setSliderWidth] = usePersistedSize('lab.playground.sliderWidth', 300);
   const [runError, setRunError]   = useState(null);
@@ -106,6 +107,7 @@ export default function LabPlayground() {
     const v = valuesRef.current;
     if (!v) return;
     setRunError(null);
+    setRunInFlight(true);
     const t0 = performance.now();
     try {
       // JSON-keyed RUN: send the whole values dict; engine merges over
@@ -118,6 +120,8 @@ export default function LabPlayground() {
       setRunWallMs(elapsed);
     } catch (e) {
       setRunError(e.message || String(e));
+    } finally {
+      setRunInFlight(false);
     }
   }, []);
 
@@ -178,7 +182,8 @@ export default function LabPlayground() {
             <ChartPaneAdapter bars={chartBars} trades={trades} decisions={decisions}
                               tf={tf} setTf={setTf}
                               selectedTradeKey={selectedTradeKey}
-                              setSelectedTradeKey={setSelectedTradeKey} />
+                              setSelectedTradeKey={setSelectedTradeKey}
+                              runInFlight={runInFlight} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
             <EquityCurve stats={tradeStats} trades={trades}
@@ -408,7 +413,7 @@ function fmtPct(v, withSign) {
 // Adapts the playground's bars+trades into the slot/ChartPane data
 // shape. Bars don't change between RUNs, so the chart stays mounted
 // and only the broker (trade markers) layer redraws on each RUN.
-function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey }) {
+function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey, runInFlight }) {
   const data = useMemo(() => {
     if (!bars) return null;
     return {
@@ -428,14 +433,27 @@ function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey
     );
   }
   return (
-    <ChartPane
-      data={data}
-      tf={tf}
-      setTf={setTf}
-      runnerId="playground"
-      selectedTradeKey={selectedTradeKey}
-      setSelectedTradeKey={setSelectedTradeKey}
-    />
+    <div className="relative h-full">
+      <ChartPane
+        data={data}
+        tf={tf}
+        setTf={setTf}
+        runnerId="playground"
+        selectedTradeKey={selectedTradeKey}
+        setSelectedTradeKey={setSelectedTradeKey}
+      />
+      {runInFlight && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20
+                        flex items-center gap-2 px-2.5 py-1 rounded-full
+                        bg-panel/90 backdrop-blur-sm border border-border
+                        text-[10px] text-muted shadow-lg">
+          <span className="inline-block w-3 h-3 rounded-full
+                            border-2 border-accent/30 border-t-accent
+                            animate-spin" />
+          running…
+        </div>
+      )}
+    </div>
   );
 }
 
