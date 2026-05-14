@@ -6,12 +6,22 @@
 import { useParams } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { runnerControl } from '../../data/commands';
+import { useActiveCoord } from '../../data/coords';
+import { useBrokerTruthStatus } from '../../data/brokerTruthClient';
+
+// Stale threshold matches coord's poll_interval_sec (60s) + one tick of
+// slack -- inside this window we trust the displayed broker $; outside,
+// we dim it so users know the number isn't being refreshed.
+const STALE_AFTER_SEC = 120;
 
 export default function SlotHeader({ slotMeta, data }) {
   const { id } = useParams();
   const stats = useMemo(() => compute(data), [data]);
   const [busy, setBusy] = useState(null);
   const [toast, setToast] = useState(null);
+  const coord = useActiveCoord('runners');
+  const truth = useBrokerTruthStatus(slotMeta.account, coord?.url);
+  const truthHealth = classifyTruth(truth);
 
   const fireToast = (text, ok = true) => {
     setToast({ text, ok });
@@ -47,11 +57,16 @@ export default function SlotHeader({ slotMeta, data }) {
           LIVE
         </span>
       )}
+      <BrokerHealthPill health={truthHealth} />
       <span className="text-muted">|</span>
       <Cell label="trades" v={stats.n} />
       <Cell label="WR"     v={`${stats.wr}%`} />
       <Cell label="PF"     v={stats.pf} />
-      <Cell label="net"    v={fmtD(stats.net)}   cls={cls(stats.net)} />
+      <Cell label="net"
+            v={fmtD(stats.net)}
+            cls={cls(stats.net)}
+            stale={truthHealth.kind !== 'ok'}
+            staleTitle={truthHealth.tooltip} />
       <Cell label="Δ"      v={fmtD(stats.delta)} cls={cls(stats.delta)} />
       <Cell label="DD"     v={fmtD(stats.dd)}    cls="text-short" />
 
@@ -68,11 +83,51 @@ export default function SlotHeader({ slotMeta, data }) {
   );
 }
 
-function Cell({ label, v, cls = '' }) {
+function Cell({ label, v, cls = '', stale = false, staleTitle = '' }) {
   return (
-    <span className="flex items-baseline gap-1">
+    <span className="flex items-baseline gap-1" title={stale ? staleTitle : undefined}>
       <span className="text-muted text-[10px] uppercase tracking-wide">{label}</span>
-      <span className={`font-semibold ${cls}`}>{v}</span>
+      <span className={`font-semibold ${stale ? 'opacity-40 line-through decoration-1' : cls}`}>
+        {v}
+      </span>
+    </span>
+  );
+}
+
+// Maps the raw poller status into one of three states + a pre-built
+// tooltip string so the consumers (pill + stale-cell title) share one
+// vocabulary.
+function classifyTruth({ status, pollerError } = {}) {
+  if (pollerError) {
+    return { kind: 'err', label: '?', color: 'short',
+             tooltip: `broker poller unreachable: ${pollerError}` };
+  }
+  if (!status) {
+    return { kind: 'err', label: '?', color: 'short',
+             tooltip: 'no broker_truth status for this account' };
+  }
+  if (!status.last_ok) {
+    return { kind: 'err', label: 'x', color: 'short',
+             tooltip: `broker poll failed: ${status.last_error || 'unknown'}` };
+  }
+  if (status.age_sec == null || status.age_sec > STALE_AFTER_SEC) {
+    return { kind: 'stale', label: '!', color: 'amber',
+             tooltip: `broker truth stale (${status.age_sec?.toFixed(0) ?? '?'}s since last refresh)` };
+  }
+  return { kind: 'ok', label: '✓', color: 'long',
+           tooltip: `broker truth ok (${status.last_n_trades ?? 0} trades, ${status.age_sec.toFixed(0)}s ago)` };
+}
+
+function BrokerHealthPill({ health }) {
+  const palette = {
+    long:  'bg-long/20 text-long border-long/40',
+    short: 'bg-short/20 text-short border-short/40',
+    amber: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+  }[health.color] || 'bg-bg text-muted border-border';
+  return (
+    <span title={health.tooltip}
+          className={`px-1.5 py-px text-[10px] rounded border tnum ${palette}`}>
+      bkr {health.label}
     </span>
   );
 }
