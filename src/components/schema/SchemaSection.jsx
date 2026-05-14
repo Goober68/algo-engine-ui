@@ -44,7 +44,7 @@ export default function SchemaSection({
         )}
       </button>
       {open && (
-        <div className="pb-px">
+        <div className="pb-px pl-3">
           {children}
         </div>
       )}
