@@ -402,13 +402,17 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
   // Earlier this effect listed `data` as a dep, which meant every tick
   // (which mutates `data`) re-snapped the chart back to the selection
   // and clobbered the user's manual scroll. Read `data` via ref instead.
+  // Searches BOTH broker and algo trades (TradeTable rows can be keyed
+  // by the algo entry_ts when broker hasn't filled yet, or by the
+  // broker entry_ts for paired/orphan-broker rows).
   const dataForPanRef = useRef(data);
   useEffect(() => { dataForPanRef.current = data; }, [data]);
   useEffect(() => {
     if (!chartRef.current || selectedTradeKey == null) return;
     const d = dataForPanRef.current;
     if (!d) return;
-    const t = d.broker.find(t => t.entry_ts === selectedTradeKey);
+    const t = (d.broker || []).find(t => t.entry_ts === selectedTradeKey)
+           || (d.trades || []).find(t => t.entry_ts === selectedTradeKey);
     if (!t) return;
     const ts = Math.floor(t.entry_ts / 1e9);
     const tfSnap = Math.floor(ts / tf) * tf;
