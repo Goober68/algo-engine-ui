@@ -707,15 +707,21 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   //   side=N (not classified)                   -> grey
   // 50% alpha so the bid/ask lines stay readable underneath. Hidden
   // entirely when the visible window is >= 30s -- at that span the
-  // dots carpet the chart and obscure the b/a lines. Zoom in past
-  // 30s and they fade in.
-  if (spanNs < 30 * 1_000_000_000) {
+  // dots carpet the chart and obscure the b/a lines. Inside 30s,
+  // radius ramps logarithmically with zoom (linear-per-ms would 30x
+  // from 30s->1s, way too aggressive); +2 per decade of zoom, capped.
+  // Size still adds a small per-print bump on top.
+  const ZOOM_GATE_NS = 30 * 1_000_000_000;
+  if (spanNs < ZOOM_GATE_NS) {
+    const spanSec = spanNs / 1e9;
+    const zoomBoost = 2 * Math.log10(30 / Math.max(0.001, spanSec));
+    const baseR = Math.max(1.5, Math.min(8, 2 + zoomBoost));
     for (const t of ticks) {
       if (t.kind !== 'trade') continue;
       if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
       if (t.price < pmin || t.price > pmax) continue;
       const cx = xT(t.ts_ns), cy = yP(t.price);
-      const r = 2 + Math.min(2.5, Math.log2((t.size || 1) + 1) * 0.4);
+      const r = baseR + Math.min(2.5, Math.log2((t.size || 1) + 1) * 0.4);
       ctx.fillStyle = t.side === 'B' ? 'rgba(239,83,80,0.5)'
                     : t.side === 'A' ? 'rgba(127,255,0,0.5)'
                     :                  'rgba(124,129,144,0.5)';
