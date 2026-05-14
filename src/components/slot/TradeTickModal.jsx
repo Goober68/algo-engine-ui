@@ -183,25 +183,32 @@ export default function TradeTickModal({ trade, algoTrade, decision, audit, onCl
           <button onClick={onClose} className="text-muted hover:text-text text-lg leading-none">×</button>
         </div>
 
-        {/* Summary 2-col -- broker / algo entry+exit comparison up
-            front (left col = broker truth = what executed; right col
-            = algo-sim = what the runner thought it did). Slip / missed-
-            fills jump out at a glance. SL/TP/duration/profit follow. */}
-        <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
-          <KV k="direction"     v={trade.side.toUpperCase()} cls={isLong ? 'text-buy' : 'text-sell'} />
-          <KV k="size"          v={trade.qty} />
-          <KV k="broker entry"  v={fmtTimePx(trade.entry_ts, trade.entry_px)} />
-          <KV k="algo entry"    v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
-              cls={algoTrade ? '' : 'text-muted'} />
-          <KV k="broker exit"   v={fmtTimePx(trade.exit_ts, trade.exit_px)} />
-          <KV k="algo exit"     v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
-              cls={algoTrade ? '' : 'text-muted'} />
-          <KV k="SL @ entry"    v={slPx ? slPx.toFixed(2) : '—'} cls={slPx ? 'text-sl' : ''} />
-          <KV k="TP @ entry"    v={tpPx ? tpPx.toFixed(2) : '—'} cls={tpPx ? 'text-tp' : ''} />
-          <KV k="reason"        v={decision?.reason || trade.reason || 'EXIT'} />
-          <KV k="duration"      v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
-          <KV k="profit"        v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
-          <KV k="comment"       v={trade.algo_id || ''} />
+        {/* Summary 3-col:
+              col 1 = order specs (direction, size, TP, SL, trail)
+              col 2 = algo/broker entry+exit comparison + profit
+              col 3 = duration / reason / comment */}
+        <div className="grid grid-cols-3 gap-x-6 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
+          <div className="space-y-1">
+            <KV k="direction" v={trade.side.toUpperCase()} cls={isLong ? 'text-buy' : 'text-sell'} />
+            <KV k="size"      v={trade.qty} />
+            <KV k="TP"        v={tpPx ? tpPx.toFixed(2) : '—'} cls={tpPx ? 'text-tp' : ''} />
+            <KV k="SL"        v={slPx ? slPx.toFixed(2) : '—'} cls={slPx ? 'text-sl' : ''} />
+            <KV k="TT"        v={fmtTrail(decision)} cls="text-trail" />
+          </div>
+          <div className="space-y-1">
+            <KV k="algo entry"   v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
+                cls={algoTrade ? '' : 'text-muted'} />
+            <KV k="broker entry" v={fmtTimePx(trade.entry_ts, trade.entry_px)} />
+            <KV k="algo exit"    v={fmtTimePx(algoTrade?.exit_ts, algoTrade?.exit_px)}
+                cls={algoTrade ? '' : 'text-muted'} />
+            <KV k="broker exit"  v={fmtTimePx(trade.exit_ts, trade.exit_px)} />
+            <KV k="profit"       v={fmtPnl(trade.pnl)} cls={trade.pnl > 0 ? 'text-win' : 'text-loss'} />
+          </div>
+          <div className="space-y-1">
+            <KV k="duration" v={trade.exit_ts ? fmtDuration(trade.exit_ts - trade.entry_ts) : '—'} />
+            <KV k="reason"   v={decision?.reason || trade.reason || 'EXIT'} />
+            <KV k="comment"  v={trade.algo_id || ''} />
+          </div>
         </div>
 
         {/* Webhook bracket (what was POSTed to the relay for this trade) */}
@@ -503,6 +510,15 @@ function fmtTimePx(ns, px) {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   });
   return `${t} @ ${px.toFixed(2)}`;
+}
+
+// Trail summary: "<trigger>t / <dist>t" -- trigger ticks to arm + dist
+// ticks to chase. Em-dash when no decision (= no trail params surfaced).
+function fmtTrail(decision) {
+  const trig = decision?.trail_trigger_ticks;
+  const dist = decision?.trail_dist_ticks;
+  if (trig == null || dist == null) return '—';
+  return `${trig}t / ${dist}t`;
 }
 
 function fmtFullTime(ns) {
