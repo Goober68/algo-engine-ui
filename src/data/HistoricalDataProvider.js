@@ -29,6 +29,8 @@
 // Plus a synthesized slotMeta + meta so SlotHeader and the parent
 // route can render without further plumbing.
 
+import { expandDecisions } from './decisionsCodec';
+
 const DIR_TO_SIDE = { LONG: 'long', SHORT: 'short' };
 const REASON_MAP = {
   TP: 'tp', SL: 'sl', TRAIL: 'trail',
@@ -118,7 +120,7 @@ export function buildHistoricalData(vizText, label, fileNames = {}) {
   // real-broker. For a historical replay both are the same source, so
   // set them identical -- delta will be 0, which is the truth.
   const trades   = broker;
-  const decisions = Array.isArray(viz.decisions) ? viz.decisions : [];
+  const decisions = expandDecisions(viz.decisions);
 
   return {
     data:     { bars, trades, broker, decisions, audit: [] },

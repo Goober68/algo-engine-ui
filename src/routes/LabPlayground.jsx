@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchStrategySchema } from '../data/strategySchema';
 import { fetchSessionBars, getDefaults, getLastError, getSession, sendRun, start, stop, useWsStatus } from '../data/playgroundClient';
+import { expandDecisions } from '../data/decisionsCodec';
 import SchemaSection from '../components/schema/SchemaSection';
 import ParamRow from '../components/schema/ParamRow';
 import SavedConfigs from '../components/schema/SavedConfigs';
@@ -117,7 +118,7 @@ export default function LabPlayground() {
       const elapsed = performance.now() - t0;
       setStats(result.stats || null);
       setTrades(Array.isArray(result.trades) ? result.trades : []);
-      setDecisions(Array.isArray(result.decisions) ? result.decisions : []);
+      setDecisions(expandDecisions(result.decisions));
       setRunWallMs(elapsed);
     } catch (e) {
       setRunError(e.message || String(e));
