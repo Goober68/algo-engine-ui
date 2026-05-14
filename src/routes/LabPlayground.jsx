@@ -9,6 +9,8 @@ import { fetchSessionBars, getDefaults, getLastError, getSession, sendRun, start
 import SchemaSection from '../components/schema/SchemaSection';
 import ParamRow from '../components/schema/ParamRow';
 import ChartPane from '../components/slot/ChartPane';
+import Splitter from '../components/chrome/Splitter';
+import { usePersistedSize } from '../components/chrome/usePersistedSize';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
@@ -26,6 +28,7 @@ export default function LabPlayground() {
   const [decisions, setDecisions] = useState([]);
   const [runWallMs, setRunWallMs] = useState(null);
   const [selectedTradeKey, setSelectedTradeKey] = useState(null);   // entry_ts in ns; clicked-trade sync between equity panel + chart
+  const [sliderWidth, setSliderWidth] = usePersistedSize('lab.playground.sliderWidth', 300);
   const [runError, setRunError]   = useState(null);
   const [chartBars, setChartBars] = useState(null);    // {ts_ns, open, high, low, close, ...}[]
   const [tf, setTf]               = useState(180);     // M3 default
@@ -163,7 +166,10 @@ export default function LabPlayground() {
           schema={schema}
           values={values}
           onChange={onSliderChange}
+          width={sliderWidth}
         />
+        <Splitter dir="col" size={sliderWidth} setSize={setSliderWidth}
+                  min={220} max={600} />
         <div className="flex-1 min-w-0 min-h-0 flex flex-col">
           <KpiStrip stats={tradeStats} />
           {/* Chart 50% / equity 30% / trades 20% per Niall direction. */}
@@ -238,10 +244,11 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
 // cap, so the sidebar now surfaces every sweepable param grouped by
 // schema section (instead of just the playground_fields[] subset).
 // Each row's value lives in the values dict keyed by the param name.
-function SliderPanel({ schema, values, onChange }) {
+function SliderPanel({ schema, values, onChange, width }) {
   const sections = useMemo(() => groupSweepableBySection(schema), [schema]);
   return (
-    <div className="w-[300px] min-h-0 overflow-y-auto border-r border-border bg-panel">
+    <div style={{ width }}
+         className="shrink-0 min-h-0 overflow-y-auto bg-panel">
       {sections.map(s => (
         <SchemaSection
           key={s.id}
