@@ -10,6 +10,7 @@
 //                buffer's oldest entry.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { redactSecrets } from '../../data/redact';
 
 const COORD   = import.meta.env.VITE_ALGO_COORD_URL?.replace(/\/+$/, '') || '';
 const ARCHIVE = import.meta.env.VITE_TICK_ARCHIVE_URL?.replace(/\/+$/, '') || '';
@@ -395,7 +396,7 @@ function WebhookPanel({ audit, trade }) {
           raw payload
         </summary>
         <pre className="mt-1 text-[10px] leading-tight bg-bg p-2 rounded border border-border overflow-x-auto whitespace-pre">
-{JSON.stringify({ request: audit?.request, response: audit?.response, status: audit?.status }, null, 2)}
+{JSON.stringify(redactSecrets({ request: audit?.request, response: audit?.response, status: audit?.status }), null, 2)}
         </pre>
       </details>
     </div>

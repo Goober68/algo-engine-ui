@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PaneHeader } from './LogsDrawer';
+import { redactSecrets } from '../../data/redact';
 
 const MATCH_AHEAD_NS  = 5 * 60 * 1_000_000_000;   // 5 min forward
 const MATCH_BEHIND_NS = 30 * 1_000_000_000;       // 30s backward
@@ -87,7 +88,7 @@ function buildRows(data) {
     // signal_id / action / price / brackets at a glance. Long; the
     // row's `truncate` + tooltip handle overflow.
     const reqStr = req && Object.keys(req).length
-      ? JSON.stringify(req)
+      ? JSON.stringify(redactSecrets(req))
       : '(no request body)';
     let suffix = '';
     if (matched)               suffix = ' → filled';
@@ -107,7 +108,7 @@ function buildRows(data) {
       status,
       line,
       cls,
-      full:       JSON.stringify({ request: req, response: a.response, status }, null, 2),
+      full:       JSON.stringify(redactSecrets({ request: req, response: a.response, status }), null, 2),
       matchedKey: matched ? matched.entry_ts : null,
     };
   });
