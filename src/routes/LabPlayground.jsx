@@ -433,8 +433,33 @@ function fmtPct(v, withSign) {
 function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey, runInFlight }) {
   const data = useMemo(() => {
     if (!bars) return null;
+    // Overlay each RUN's MAs from decisions[].xovd onto the static
+    // bars (engine 8ca6a69 streams MAs in the decision payload).
+    // Falls back to whatever AEIB-loaded value bars[i] already has
+    // when decisions don't carry an entry for that bar.
+    let withLiveMAs = bars;
+    if (decisions && decisions.length) {
+      const byBarIdx = new Map();
+      for (const d of decisions) {
+        if (typeof d.bar_idx === 'number' && d.xovd) {
+          byBarIdx.set(d.bar_idx, d.xovd);
+        }
+      }
+      if (byBarIdx.size > 0) {
+        withLiveMAs = bars.map((b, i) => {
+          const x = byBarIdx.get(i);
+          if (!x) return b;
+          return {
+            ...b,
+            fast_ma: x.fast_ma ?? b.fast_ma,
+            slow_ma: x.slow_ma ?? b.slow_ma,
+            atr:     x.atr     ?? b.atr,
+          };
+        });
+      }
+    }
     return {
-      bars,
+      bars: withLiveMAs,
       broker: tradesToBroker(trades || []),
       trades: tradesToBroker(trades || []),
       decisions: decisions || [],
