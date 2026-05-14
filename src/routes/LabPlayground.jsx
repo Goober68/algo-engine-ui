@@ -23,6 +23,7 @@ export default function LabPlayground() {
   const [values, setValues]       = useState(null);    // current slider values, ordered per playground_fields
   const [stats, setStats]         = useState(null);
   const [trades, setTrades]       = useState([]);
+  const [decisions, setDecisions] = useState([]);
   const [runWallMs, setRunWallMs] = useState(null);
   const [runError, setRunError]   = useState(null);
   const [chartBars, setChartBars] = useState(null);    // {ts_ns, open, high, low, close, ...}[]
@@ -89,6 +90,32 @@ export default function LabPlayground() {
     return () => { cancelled = true; };
   }, [wsStatus]);
 
+  // valuesRef keeps triggerRun stateless on values: the debounced
+  // setTimeout fires the LATEST sliders, not whatever was captured at
+  // useCallback time (the closure-bug that made slider drags re-run
+  // with the seed dict and look like nothing was changing).
+  const valuesRef = useRef(values);
+  useEffect(() => { valuesRef.current = values; }, [values]);
+
+  const triggerRun = useCallback(async () => {
+    const v = valuesRef.current;
+    if (!v) return;
+    setRunError(null);
+    const t0 = performance.now();
+    try {
+      // JSON-keyed RUN: send the whole values dict; engine merges over
+      // the .set baseline. Empty dict = pure baseline.
+      const result = await sendRun(v);
+      const elapsed = performance.now() - t0;
+      setStats(result.stats || null);
+      setTrades(Array.isArray(result.trades) ? result.trades : []);
+      setDecisions(Array.isArray(result.decisions) ? result.decisions : []);
+      setRunWallMs(elapsed);
+    } catch (e) {
+      setRunError(e.message || String(e));
+    }
+  }, []);
+
   const onSliderChange = useCallback((key, raw) => {
     if (!schema) return;
     const def = schema.params[key];
@@ -101,27 +128,11 @@ export default function LabPlayground() {
       writeAutosave(next);
       return next;
     });
-    // Debounced run-on-change.
+    // Debounced run-on-change. triggerRun reads valuesRef so it sees
+    // the just-written value even though setValues is async.
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(triggerRun, RUN_DEBOUNCE_MS);
-  }, [schema]);
-
-  const triggerRun = useCallback(async () => {
-    if (!values) return;
-    setRunError(null);
-    const t0 = performance.now();
-    try {
-      // JSON-keyed RUN: send the whole values dict; engine merges over
-      // the .set baseline. Empty dict = pure baseline.
-      const result = await sendRun(values);
-      const elapsed = performance.now() - t0;
-      setStats(result.stats || null);
-      setTrades(Array.isArray(result.trades) ? result.trades : []);
-      setRunWallMs(elapsed);
-    } catch (e) {
-      setRunError(e.message || String(e));
-    }
-  }, [values]);
+  }, [schema, triggerRun]);
 
   // Hoist before the early returns -- React needs the same hook order
   // every render (the schema-loading guard would otherwise skip it on
@@ -156,7 +167,8 @@ export default function LabPlayground() {
           <KpiStrip stats={tradeStats} />
           {/* Chart 50% / equity 30% / trades 20% per Niall direction. */}
           <div className="min-h-0" style={{ flex: '0 0 50%' }}>
-            <ChartPaneAdapter bars={chartBars} trades={trades} tf={tf} setTf={setTf} />
+            <ChartPaneAdapter bars={chartBars} trades={trades} decisions={decisions}
+                              tf={tf} setTf={setTf} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
             <EquityCurve stats={tradeStats} trades={trades} />
@@ -378,17 +390,17 @@ function fmtPct(v, withSign) {
 // Adapts the playground's bars+trades into the slot/ChartPane data
 // shape. Bars don't change between RUNs, so the chart stays mounted
 // and only the broker (trade markers) layer redraws on each RUN.
-function ChartPaneAdapter({ bars, trades, tf, setTf }) {
+function ChartPaneAdapter({ bars, trades, decisions, tf, setTf }) {
   const data = useMemo(() => {
     if (!bars) return null;
     return {
       bars,
       broker: tradesToBroker(trades || []),
       trades: tradesToBroker(trades || []),
-      decisions: [],
+      decisions: decisions || [],
       audit: [],
     };
-  }, [bars, trades]);
+  }, [bars, trades, decisions]);
 
   if (!bars) {
     return (
