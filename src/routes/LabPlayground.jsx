@@ -514,7 +514,10 @@ function EquityCurve({ stats, trades, selectedTradeKey, setSelectedTradeKey }) {
   const yOf = (v) => H_EQ - 2 - ((v - lo) / span) * (H_EQ - 4);
   const zeroY = yOf(0);
   const path  = equity.map((v, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
-  const stroke = finalPnl >= 0 ? '#26a69a' : '#ef5350';
+  // Hard-split stroke color at the y=0 line via a userSpaceOnUse
+  // linearGradient: above-zero is green (long), below-zero is red
+  // (short). Solo color when the run never crosses zero.
+  const zeroPct = Math.max(0, Math.min(1, zeroY / H_EQ)) * 100;
   const ticks = niceTicks(lo, hi, 4);
 
   const toggleLock = () => {
@@ -598,16 +601,30 @@ function EquityCurve({ stats, trades, selectedTradeKey, setSelectedTradeKey }) {
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
            onMouseMove={onMove} onMouseLeave={onLeave} onClick={onClick}
            className="block w-full flex-1 min-h-0 cursor-crosshair">
-        {/* Y-axis grid + $ labels */}
+        <defs>
+          {/* Hard-split stroke: green above the zeroY line, red below.
+              userSpaceOnUse so the stop offsets are absolute viewBox y. */}
+          <linearGradient id="equityStrokeSplit"
+                          gradientUnits="userSpaceOnUse"
+                          x1="0" y1="0" x2="0" y2={H_EQ}>
+            <stop offset="0%"            stopColor="#26a69a" />
+            <stop offset={`${zeroPct}%`} stopColor="#26a69a" />
+            <stop offset={`${zeroPct}%`} stopColor="#ef5350" />
+            <stop offset="100%"          stopColor="#ef5350" />
+          </linearGradient>
+        </defs>
+        {/* Y-axis grid + $ labels (zero line punched brighter + thicker) */}
         {ticks.map((v, k) => {
           const y = yOf(v);
+          const isZero = v === 0;
           return (
             <g key={k}>
               <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y}
-                    stroke="#2a2e36" strokeWidth="0.5"
-                    strokeDasharray={v === 0 ? '0' : '2 3'} />
+                    stroke={isZero ? '#7c8190' : '#2a2e36'}
+                    strokeWidth={isZero ? 1.25 : 0.5}
+                    strokeDasharray={isZero ? '0' : '2 3'} />
               <text x={W - PAD_R + 4} y={y + 3}
-                    fontSize="10" fill="#7c8190"
+                    fontSize="10" fill={isZero ? '#d4d7dd' : '#7c8190'}
                     fontFamily="ui-monospace, Menlo, Consolas, monospace">
                 {fmtAxis(v)}
               </text>
@@ -630,8 +647,8 @@ function EquityCurve({ stats, trades, selectedTradeKey, setSelectedTradeKey }) {
                   opacity="0.7" />
           );
         })}
-        {/* Equity line on top */}
-        <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
+        {/* Equity line on top -- gradient stroke renders red below zero. */}
+        <path d={path} fill="none" stroke="url(#equityStrokeSplit)" strokeWidth="1.5" />
         {/* Selected-trade pin (from chart click or here-click). Re-keyed
             on selectedTradeKey so the .equity-pin CSS animation
             restarts -- exponential fade with ~1.2s half-life. */}
