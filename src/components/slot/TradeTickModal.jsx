@@ -231,6 +231,7 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           entryPx={trade.entry_px}
           side={trade.side}
           slPx={slPx}
+          tpPx={tpPx}
           tsPx={tsPx}
           fromNs={fromNs}
           toNs={toNs}
@@ -313,7 +314,7 @@ function WebhookPanel({ audit, trade }) {
   );
 }
 
-function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs }) {
+function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
 
@@ -321,12 +322,12 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
     if (!wrap || !cv) return;
-    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs);
+    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs);
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs]);
+  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs]);
 
   // Per prime directive: surface where the ticks actually came from.
   // Live ring vs disk archive is meaningful for "is this what the
@@ -368,7 +369,7 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
   );
 }
 
-function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tsPx, fromNs, toNs) {
+function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs) {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wrap.clientWidth;
   const cssH = wrap.clientHeight;
@@ -398,9 +399,14 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   if (brokerTrade?.exit_px)  { pmin = Math.min(pmin, brokerTrade.exit_px);  pmax = Math.max(pmax, brokerTrade.exit_px); }
   if (algoTrade?.entry_px)   { pmin = Math.min(pmin, algoTrade.entry_px);   pmax = Math.max(pmax, algoTrade.entry_px); }
   if (algoTrade?.exit_px)    { pmin = Math.min(pmin, algoTrade.exit_px);    pmax = Math.max(pmax, algoTrade.exit_px); }
-  if (slPx) { pmin = Math.min(pmin, slPx); pmax = Math.max(pmax, slPx); }
-  if (tsPx) { pmin = Math.min(pmin, tsPx); pmax = Math.max(pmax, tsPx); }
+  // Entry must be in band (the trade's center of gravity); TT
+  // (trail-arm) likewise -- it represents the move size we expect.
+  // SL + TP do NOT extend the y-range -- they may be far away
+  // (wide stops, generous TPs) and stretching the band for them
+  // would compress the meaningful tick action into a sliver. They
+  // render only when their price is already inside the band.
   if (entryPx) { pmin = Math.min(pmin, entryPx); pmax = Math.max(pmax, entryPx); }
+  if (tsPx)    { pmin = Math.min(pmin, tsPx);    pmax = Math.max(pmax, tsPx); }
   const pad = (pmax - pmin) * 0.05 || 0.5;
   pmin -= pad; pmax += pad;
   const xT = (ts) => x0 + (x1 - x0) * (ts - fromNs) / (toNs - fromNs);
@@ -428,14 +434,17 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     ctx.fillText(lbl, x, y1 + 4);
   }
 
-  // Bracket lines: entry / SL / TT, all dotted, color-coded.
-  // Entry line uses the same blue/yellow as the entry triangles so
-  // long vs short reads at a glance; TT line uses the trail orange
-  // (matches text-trail in the summary KV grid).
+  // Bracket lines: entry / TT always render (their prices contribute
+  // to y-range so always in-band); SL / TP only render when their
+  // price already sits inside the band -- skipped silently otherwise.
+  // Colors match the entry-triangle / summary-KV palette so long vs
+  // short reads at a glance and the TT/SL/TP labels self-explain.
   const entryColor = side === 'long' ? '#1976d2' : '#ffff00';
+  const inBand = (p) => p != null && p >= pmin && p <= pmax;
   drawHLine(ctx, x0, x1, yP, entryPx, entryColor, `entry ${entryPx?.toFixed(2)}`);
-  drawHLine(ctx, x0, x1, yP, slPx,    '#ef5350', slPx ? `SL ${slPx.toFixed(2)}` : null);
   drawHLine(ctx, x0, x1, yP, tsPx,    '#fb923c', tsPx ? `TT ${tsPx.toFixed(2)}` : null);
+  if (inBand(slPx)) drawHLine(ctx, x0, x1, yP, slPx, '#ef5350', `SL ${slPx.toFixed(2)}`);
+  if (inBand(tpPx)) drawHLine(ctx, x0, x1, yP, tpPx, '#7fff00', `TP ${tpPx.toFixed(2)}`);
 
   // bid line (cyan-ish, like playground) and ask (amber)
   drawLine(ctx, ticks, xT, yP, 'bid', '#7fc6d4');
