@@ -25,6 +25,7 @@ export default function LabPlayground() {
   const [trades, setTrades]       = useState([]);
   const [decisions, setDecisions] = useState([]);
   const [runWallMs, setRunWallMs] = useState(null);
+  const [selectedTradeKey, setSelectedTradeKey] = useState(null);   // entry_ts in ns; clicked-trade sync between equity panel + chart
   const [runError, setRunError]   = useState(null);
   const [chartBars, setChartBars] = useState(null);    // {ts_ns, open, high, low, close, ...}[]
   const [tf, setTf]               = useState(180);     // M3 default
@@ -168,10 +169,14 @@ export default function LabPlayground() {
           {/* Chart 50% / equity 30% / trades 20% per Niall direction. */}
           <div className="min-h-0" style={{ flex: '0 0 50%' }}>
             <ChartPaneAdapter bars={chartBars} trades={trades} decisions={decisions}
-                              tf={tf} setTf={setTf} />
+                              tf={tf} setTf={setTf}
+                              selectedTradeKey={selectedTradeKey}
+                              setSelectedTradeKey={setSelectedTradeKey} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
-            <EquityCurve stats={tradeStats} trades={trades} />
+            <EquityCurve stats={tradeStats} trades={trades}
+                         selectedTradeKey={selectedTradeKey}
+                         setSelectedTradeKey={setSelectedTradeKey} />
           </div>
           <div className="min-h-0 overflow-y-auto border-t border-border" style={{ flex: '0 0 20%' }}>
             <TradesTable trades={trades} />
@@ -390,7 +395,7 @@ function fmtPct(v, withSign) {
 // Adapts the playground's bars+trades into the slot/ChartPane data
 // shape. Bars don't change between RUNs, so the chart stays mounted
 // and only the broker (trade markers) layer redraws on each RUN.
-function ChartPaneAdapter({ bars, trades, decisions, tf, setTf }) {
+function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey }) {
   const data = useMemo(() => {
     if (!bars) return null;
     return {
@@ -415,8 +420,8 @@ function ChartPaneAdapter({ bars, trades, decisions, tf, setTf }) {
       tf={tf}
       setTf={setTf}
       runnerId="playground"
-      selectedTradeKey={null}
-      setSelectedTradeKey={() => {}}
+      selectedTradeKey={selectedTradeKey}
+      setSelectedTradeKey={setSelectedTradeKey}
     />
   );
 }
@@ -460,9 +465,22 @@ const TICK_VALUE_USD = 0.5;
 //   [equity track]   y in [0, H_EQ]              cumulative-$ line
 //   [bar track]      y in [H_EQ + GAP, H]        per-trade green/red bars
 //   right-edge labels: $ ticks on the equity axis
-function EquityCurve({ stats, trades }) {
+//
+// Lock-Y persists a snapshotted [lo, hi] range to localStorage; while
+// locked, the axis stays put across runs so two slider configurations
+// can be compared at the same scale (lifted from the legacy
+// strategy-visualizer/playground.html).
+function EquityCurve({ stats, trades, selectedTradeKey, setSelectedTradeKey }) {
   const wrapRef = useRef(null);
-  const [hover, setHover] = useState(null);  // { idx, screenX, screenY } | null
+  const [hover, setHover] = useState(null);
+  const [lockedRange, setLockedRange] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem('playground.equity.lockY.v1');
+      if (!raw) return null;
+      const r = JSON.parse(raw);
+      return (r && Number.isFinite(r.lo) && Number.isFinite(r.hi)) ? r : null;
+    } catch { return null; }
+  });
   if (!stats) {
     return (
       <div className="bg-panel border-b border-border px-3 py-2 text-[10px] text-muted/70 italic h-full">
@@ -475,13 +493,15 @@ function EquityCurve({ stats, trades }) {
 
   // viewBox math. Right-pad reserves room for the $ tick labels.
   const W = 1000, H = 240, PAD_L = 4, PAD_R = 60;
-  const H_EQ = Math.round(H * 0.72);   // equity track
+  const H_EQ = Math.round(H * 0.72);
   const GAP  = 4;
   const BAR_TOP = H_EQ + GAP;
-  const BAR_H   = H - BAR_TOP - 2;     // per-trade bars track
+  const BAR_H   = H - BAR_TOP - 2;
 
-  const lo = Math.min(0, ...equity);
-  const hi = Math.max(0, ...equity);
+  const fitLo = Math.min(0, ...equity);
+  const fitHi = Math.max(0, ...equity);
+  const lo = lockedRange ? lockedRange.lo : fitLo;
+  const hi = lockedRange ? lockedRange.hi : fitHi;
   const span = (hi - lo) || 1;
   const xOf = (i) => PAD_L + (i / Math.max(1, n - 1)) * (W - PAD_L - PAD_R);
   const yOf = (v) => H_EQ - 2 - ((v - lo) / span) * (H_EQ - 4);
@@ -489,6 +509,24 @@ function EquityCurve({ stats, trades }) {
   const path  = equity.map((v, i) => `${i === 0 ? 'M' : 'L'}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(' ');
   const stroke = finalPnl >= 0 ? '#26a69a' : '#ef5350';
   const ticks = niceTicks(lo, hi, 4);
+
+  const toggleLock = () => {
+    if (lockedRange) {
+      // Unlock: drop snapshot, axis goes back to auto-fit per-run.
+      setLockedRange(null);
+      try { window.localStorage.removeItem('playground.equity.lockY.v1'); } catch {}
+    } else {
+      // Lock: snapshot the *current* (auto-fit) range so the next run
+      // is rendered at the same scale.
+      const snap = { lo: fitLo, hi: fitHi };
+      setLockedRange(snap);
+      try { window.localStorage.setItem('playground.equity.lockY.v1', JSON.stringify(snap)); } catch {}
+    }
+  };
+
+  const selectedIdx = selectedTradeKey != null
+    ? findTradeIndexByEntryNs(trades, selectedTradeKey)
+    : -1;
 
   // Per-trade bars: each trade gets one bar. For dense series, the bar
   // width may be < 1px — that's fine, browsers anti-alias and the
@@ -516,8 +554,15 @@ function EquityCurve({ stats, trades }) {
     setHover({ idx, x: e.clientX - rect.left, y: e.clientY - rect.top });
   };
   const onLeave = () => setHover(null);
+  const onClick = () => {
+    if (!hover || !setSelectedTradeKey) return;
+    const t = trades?.[hover.idx];
+    if (!t) return;
+    const entryNs = (t.entry_time ?? Math.floor((t.entry_ns ?? 0) / 1e9)) * 1e9;
+    setSelectedTradeKey(entryNs);
+  };
 
-  const tip = hover ? buildTradeTip(hover, trades, equity, rect => rect) : null;
+  const tip = hover ? buildTradeTip(hover, trades, equity) : null;
 
   return (
     <div className="bg-panel px-3 py-1 h-full flex flex-col min-h-0 relative" ref={wrapRef}>
@@ -528,10 +573,23 @@ function EquityCurve({ stats, trades }) {
         </span>
         <span className="text-muted tnum">peak <span className="text-text">{fmtUSD(peak)}</span></span>
         <span className="text-muted tnum">max DD <span className="text-short">{fmtUSD(-maxDD)}</span></span>
+        <button
+          type="button"
+          onClick={toggleLock}
+          title={lockedRange
+            ? `Y axis locked at [${fmtAxis(lockedRange.lo)}, ${fmtAxis(lockedRange.hi)}] -- click to unlock`
+            : 'Lock current Y range so the next run renders at the same scale (compare slider configs)'}
+          className={'ml-2 px-1.5 py-0 rounded border text-[9px] uppercase tracking-wider font-bold ' +
+            (lockedRange
+              ? 'bg-accent/20 text-accent border-accent/60'
+              : 'bg-bg text-muted border-border hover:text-text hover:border-muted')}
+        >
+          lock Y{lockedRange ? ' on' : ''}
+        </button>
         <span className="ml-auto text-[9px] text-muted/60 uppercase tracking-wide">trade #</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-           onMouseMove={onMove} onMouseLeave={onLeave}
+           onMouseMove={onMove} onMouseLeave={onLeave} onClick={onClick}
            className="block w-full flex-1 min-h-0 cursor-crosshair">
         {/* Y-axis grid + $ labels */}
         {ticks.map((v, k) => {
@@ -567,6 +625,11 @@ function EquityCurve({ stats, trades }) {
         })}
         {/* Equity line on top */}
         <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
+        {/* Selected-trade pin (from chart click or here-click) */}
+        {selectedIdx >= 0 && (
+          <line x1={xOf(selectedIdx)} y1={0} x2={xOf(selectedIdx)} y2={H}
+                stroke="#facc15" strokeWidth="1" opacity="0.85" />
+        )}
         {/* Hover crosshair */}
         {hover && (
           <line x1={xOf(hover.idx)} y1={0} x2={xOf(hover.idx)} y2={H}
@@ -585,12 +648,14 @@ function buildTradeTip(hover, trades, equity) {
   if (!t) return null;
   const dir = String(t.dir || (t.direction === 1 ? 'LONG' : 'SHORT')).toUpperCase();
   const cum = equity[hover.idx] ?? 0;
+  const realized = Number(t.profit ?? t.profit_points ?? 0);
   const mfeT = Number(t.mfe_ticks ?? 0);
   const maeT = Number(t.mae_ticks ?? 0);
   const qty  = Number(t.size ?? t.qty ?? 1);
   return {
     n:      hover.idx + 1,
     dir,
+    realized,
     cum,
     mfeT,
     maeT,
@@ -599,6 +664,18 @@ function buildTradeTip(hover, trades, equity) {
     ts:     t.entry_time ? new Date(t.entry_time * 1000) : null,
     exit_reason: t.exit_reason || t.reason || '',
   };
+}
+
+// Locate a trade by its entry timestamp (ns). Used to show the
+// selected-trade pin in the equity panel when ChartPane sets the key.
+function findTradeIndexByEntryNs(trades, ns) {
+  if (!trades || ns == null) return -1;
+  for (let i = 0; i < trades.length; i++) {
+    const t = trades[i];
+    const tns = (t.entry_time ?? Math.floor((t.entry_ns ?? 0) / 1e9)) * 1e9;
+    if (tns === ns) return i;
+  }
+  return -1;
 }
 
 // TV-style floating tooltip: trade #, dir, cumulative P&L, favorable
@@ -619,8 +696,12 @@ function TradeTip({ data, x, y }) {
             {data.dir.charAt(0) + data.dir.slice(1).toLowerCase()}
           </span>
         </div>
+        <Row label="Realized P&L"
+             dot={data.realized >= 0 ? '#26a69a' : '#ef5350'}
+             value={fmtUSD(data.realized)}
+             cls={data.realized >= 0 ? 'text-long' : 'text-short'} />
         <Row label="Cumulative P&L"
-             dot="#26a69a"
+             dot="#5fa8ff"
              value={fmtUSD(data.cum)}
              cls={data.cum >= 0 ? 'text-long' : 'text-short'} />
         <Row label="Favorable excursion"
