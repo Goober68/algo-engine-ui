@@ -190,11 +190,10 @@ export default function TradeTickModal({ trade, algoTrade, decision, audit, onCl
               col 3 = duration / reason / profit / comment */}
         <div className="grid grid-cols-3 gap-x-6 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
           <div className="space-y-1">
-            <KV k="direction" v={trade.side.toUpperCase()} cls={isLong ? 'text-buy' : 'text-sell'} />
-            <KV k="size"      v={trade.qty} />
-            <KV k="TP"        v={fmtTicksAbs(decision?.tp_ticks, tpPx)}                  cls="text-tp" />
-            <KV k="SL"        v={fmtTicksAbs(decision?.sl_ticks, slPx)}                  cls="text-sl" />
-            <KV k="TT"        v={fmtTrailAbs(decision, tsPx)}                            cls="text-trail" />
+            <KV k="trade" v={fmtTradeSpec(trade, audit)} cls={isLong ? 'text-buy' : 'text-sell'} />
+            <KV k="TP"    v={fmtTicksAbs(decision?.tp_ticks, tpPx)}  cls="text-tp" />
+            <KV k="SL"    v={fmtTicksAbs(decision?.sl_ticks, slPx)}  cls="text-sl" />
+            <KV k="TT"    v={fmtTrailAbs(decision, tsPx)}            cls="text-trail" />
           </div>
           <div className="space-y-1">
             <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
@@ -515,6 +514,22 @@ function fmtTimePx(ns, px) {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   });
   return `${t} @ ${px.toFixed(2)}`;
+}
+
+// One-line trade spec: '<order-type> <SIDE> <qty> <symbol>'.
+// Order type defaults to LMT (XOVD always places limit entries via
+// the relay); audit.request.type can override when the runner sends
+// something else (market emergency-flatten, etc). Symbol pulled from
+// audit.request.ticker when present, else falls back to MNQ (the
+// project's only live symbol today).
+function fmtTradeSpec(trade, audit) {
+  const req = audit?.request || {};
+  let orderType = (req.type || req.order_type || 'LMT').toUpperCase();
+  if (orderType === 'LIMIT') orderType = 'LMT';
+  if (orderType === 'MARKET') orderType = 'MKT';
+  const side = trade.side.toUpperCase();
+  const sym = (req.ticker || req.symbol || 'MNQ').replace(/[!1]+$/, '');
+  return `${orderType} ${side} ${trade.qty} ${sym}`;
 }
 
 // "<ticks>t - <abs_price>" formatter for the TP / SL rows. Trader
