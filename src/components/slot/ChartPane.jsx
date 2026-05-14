@@ -120,7 +120,12 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
     const slowMa = chart.addSeries(LineSeries, { color: '#2962FF', lineWidth: 3, priceLineVisible: false, lastValueVisible: false });
 
     // Click-on-candle -> open the trade whose entry-bar is the bar
-    // clicked. Exact-bar match only — no nearest-in-time fallback.
+    // clicked. Match window = the natural bar (floor(entry_ts/tf))
+    // OR the next bar -- subBarX renders markers smoothly from bar X
+    // center (alpha=0) to bar X+1 center (alpha=1), so a high-alpha
+    // entry has its triangle visually parked on bar X+1 even though
+    // the entry's ts_ns floors to bar X. Without the +tf fallback,
+    // clicking the bar where you SEE the marker misses the trade.
     chart.subscribeClick((param) => {
       if (!param?.time) return;
       const broker = currentBrokerRef.current;
@@ -129,7 +134,7 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
       const clickSec = Number(param.time);
       for (const t of broker) {
         const entryBar = Math.floor(t.entry_ts / 1e9 / tfNow) * tfNow;
-        if (entryBar === clickSec) {
+        if (entryBar === clickSec || entryBar + tfNow === clickSec) {
           setSelectedTradeKeyRef.current(t.entry_ts);
           return;
         }
@@ -699,7 +704,7 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
   drawLimitLine(ctx, chart, candles, data, tf, snap);
   // Slow-EMA-anchored "what-if" limit line. No-op when the runner
   // isn't emitting entry_limit_slow yet (engine-claude ask filed in
-  // COORDINATION.md 2026-05-12). When it arrives, this draws a dashed,
+  // devstream.md 2026-05-12). When it arrives, this draws a dashed,
   // dimmed line alongside the primary so "we're in slow-anchor zone
   // but slow path isn't firing" becomes visible at a glance.
   drawLimitLineSlow(ctx, chart, candles, data, tf, snap);
