@@ -78,7 +78,15 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
     const chart = createChart(el, {
       layout: { background: { color: '#0f1115' }, textColor: '#d4d7dd' },
       grid:   { vertLines: { color: '#1a1d23' }, horzLines: { color: '#1a1d23' } },
-      rightPriceScale: { borderColor: '#2a2e36' },
+      rightPriceScale: {
+        borderColor: '#2a2e36',
+        // lightweight-charts defaults are 0.2/0.1 (20% empty above the
+        // highest candle, 10% below). Tighten to 8%/5% so the Y range
+        // hugs the data more closely -- the chart's small enough that
+        // the default margins waste a sizable fraction of the visible
+        // height. Auto-scale still applies these margins; just smaller.
+        scaleMargins: { top: 0.08, bottom: 0.05 },
+      },
       timeScale: {
         borderColor: '#2a2e36',
         timeVisible: true,
