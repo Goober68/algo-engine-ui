@@ -166,6 +166,49 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, onPrev, onNext]);
 
+  // Floating-panel position. Initial render uses transform centering
+  // (no measurement needed -> no flash); the layout effect below
+  // measures the panel once and converts to numeric left/top so the
+  // drag handler can manipulate coords directly.
+  const panelRef = useRef(null);
+  const [pos, setPos] = useState(null);
+  useEffect(() => {
+    if (pos !== null) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPos({
+      x: Math.max(0, (window.innerWidth  - rect.width)  / 2),
+      y: Math.max(0, (window.innerHeight - rect.height) / 2),
+    });
+  }, [pos]);
+
+  // Drag-by-header. Header buttons opt out via closest('button') so
+  // prev/next/close still fire normally. Position clamped so the
+  // user can't fling it off-screen and lose the close button.
+  const onHeaderMouseDown = (e) => {
+    if (e.target.closest('button')) return;
+    if (!pos) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const startPos = { ...pos };
+    const onMove = (ev) => {
+      const el = panelRef.current;
+      const w = el?.offsetWidth  || 0;
+      const h = el?.offsetHeight || 0;
+      setPos({
+        x: clamp(startPos.x + (ev.clientX - startX), 8 - w + 80, window.innerWidth  - 80),
+        y: clamp(startPos.y + (ev.clientY - startY), 0,          window.innerHeight - 40),
+      });
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  };
+
   if (!trade) return null;
 
   // Derive SL/TP prices from matching decision (if available).
@@ -185,15 +228,18 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
 
   return (
     <div
-      className="fixed inset-0 z-30 bg-black/60 flex items-center justify-center"
-      onClick={onClose}
+      ref={panelRef}
+      className="fixed z-30 bg-panel border border-border rounded-md p-4 shadow-2xl max-w-5xl w-[90vw]"
+      style={pos
+        ? { left: pos.x, top: pos.y }
+        : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
     >
-      <div
-        className="bg-panel border border-border rounded-md p-4 max-w-5xl w-[90vw]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-3">
+        {/* Header (also the drag handle -- mousedown anywhere except
+            the buttons starts a drag). */}
+        <div
+          className="flex items-center gap-3 mb-3 cursor-move select-none"
+          onMouseDown={onHeaderMouseDown}
+        >
           <h3 className="text-sm font-semibold flex-1 truncate">
             {adHoc ? (
               <>
@@ -285,10 +331,11 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           <span><span className="text-win">◀</span> win / <span className="text-loss">◀</span> loss exit</span>
           <span><span className="text-sl">SL</span></span>
         </div>
-      </div>
     </div>
   );
 }
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
 // Webhook bracket panel — surfaces what was actually sent over the
 // wire to the broker for THIS trade. The runner POSTs a single bracket
