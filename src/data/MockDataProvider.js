@@ -65,7 +65,16 @@ function slotFileUrl(runnerId, slotIdx, file) {
   // Mock files end in .jsonl; real files have no extension (NDJSON content-type).
   if (REAL) {
     const trim = file.replace(/\.jsonl$/, '');
-    return `${coordUrl()}/r/${runnerId}/s/${slotIdx}/${trim}`;
+    let url = `${coordUrl()}/r/${runnerId}/s/${slotIdx}/${trim}`;
+    // Default 6h bars window is too narrow -- only the most recent
+    // trade falls in-range for the chart's broker-triangle filter,
+    // and clicking older bars finds nothing because nothing's visible
+    // there. Bump to 24h so a full session's worth of trades land on
+    // the chart and are clickable. First-ever fetch on coord pays the
+    // tick-archive aggregation cost (~30s for 24h cold cache); warm
+    // is instant. Coord-side prewarm could mask that on boot.
+    if (trim === 'bars') url += '?hours=24';
+    return url;
   }
   return `/${FIXTURE_RUN}/slot${slotIdx}/${file}`;
 }
