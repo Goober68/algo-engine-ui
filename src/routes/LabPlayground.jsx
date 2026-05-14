@@ -159,7 +159,7 @@ export default function LabPlayground() {
             <ChartPaneAdapter bars={chartBars} trades={trades} tf={tf} setTf={setTf} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
-            <EquityCurve stats={tradeStats} />
+            <EquityCurve stats={tradeStats} trades={trades} />
           </div>
           <div className="min-h-0 overflow-y-auto border-t border-border" style={{ flex: '0 0 20%' }}>
             <TradesTable trades={trades} />
@@ -438,12 +438,19 @@ function tradesToBroker(trades) {
   });
 }
 
+// MNQ tick value: $0.50/tick. Hardcoded today; future per-session
+// metadata (symbol-aware) replaces this so non-MNQ datasets read
+// excursion dollars correctly.
+const TICK_VALUE_USD = 0.5;
+
 // ── Equity curve + per-trade profit bars + right-edge $ axis ────────
 // SVG layout (fixed viewBox W*H, preserveAspectRatio=none for stretch):
 //   [equity track]   y in [0, H_EQ]              cumulative-$ line
 //   [bar track]      y in [H_EQ + GAP, H]        per-trade green/red bars
 //   right-edge labels: $ ticks on the equity axis
-function EquityCurve({ stats }) {
+function EquityCurve({ stats, trades }) {
+  const wrapRef = useRef(null);
+  const [hover, setHover] = useState(null);  // { idx, screenX, screenY } | null
   if (!stats) {
     return (
       <div className="bg-panel border-b border-border px-3 py-2 text-[10px] text-muted/70 italic h-full">
@@ -479,8 +486,29 @@ function EquityCurve({ stats }) {
   const hOf = (p) => (absMaxPnl > 0 ? (Math.abs(p) / absMaxPnl) * (BAR_H / 2 - 1) : 0);
   const barMid = BAR_TOP + BAR_H / 2;
 
+  // Map cursor screen-x → trade index. SVG uses preserveAspectRatio=none
+  // so each viewBox-x unit scales proportionally to the rendered width;
+  // pct of [PAD_L .. W-PAD_R] maps directly to bar index 0..n-1.
+  const onMove = (e) => {
+    const el = wrapRef.current;
+    if (!el || n === 0) return;
+    const rect = el.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const usableLeft  = (PAD_L / W) * rect.width;
+    const usableRight = ((W - PAD_R) / W) * rect.width;
+    const usableW = usableRight - usableLeft;
+    if (usableW <= 0) return;
+    const t = (px - usableLeft) / usableW;
+    if (t < -0.02 || t > 1.02) { setHover(null); return; }
+    const idx = Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))));
+    setHover({ idx, x: e.clientX - rect.left, y: e.clientY - rect.top });
+  };
+  const onLeave = () => setHover(null);
+
+  const tip = hover ? buildTradeTip(hover, trades, equity, rect => rect) : null;
+
   return (
-    <div className="bg-panel px-3 py-1 h-full flex flex-col min-h-0">
+    <div className="bg-panel px-3 py-1 h-full flex flex-col min-h-0 relative" ref={wrapRef}>
       <div className="flex items-baseline gap-4 text-[10px] shrink-0">
         <span className="text-muted uppercase tracking-wide">equity</span>
         <span className={'tnum font-semibold ' + (finalPnl >= 0 ? 'text-long' : 'text-short')}>
@@ -491,7 +519,8 @@ function EquityCurve({ stats }) {
         <span className="ml-auto text-[9px] text-muted/60 uppercase tracking-wide">trade #</span>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
-           className="block w-full flex-1 min-h-0">
+           onMouseMove={onMove} onMouseLeave={onLeave}
+           className="block w-full flex-1 min-h-0 cursor-crosshair">
         {/* Y-axis grid + $ labels */}
         {ticks.map((v, k) => {
           const y = yOf(v);
@@ -526,7 +555,96 @@ function EquityCurve({ stats }) {
         })}
         {/* Equity line on top */}
         <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
+        {/* Hover crosshair */}
+        {hover && (
+          <line x1={xOf(hover.idx)} y1={0} x2={xOf(hover.idx)} y2={H}
+                stroke="#5fa8ff" strokeWidth="0.75" strokeDasharray="2 2" opacity="0.6" />
+        )}
       </svg>
+      {tip && <TradeTip data={tip} x={hover.x} y={hover.y} />}
+    </div>
+  );
+}
+
+// Build the tooltip payload from (hover, trades, cumulative-equity).
+// Renders empty when trade index is past end (no trade for that bin).
+function buildTradeTip(hover, trades, equity) {
+  const t = trades?.[hover.idx];
+  if (!t) return null;
+  const dir = String(t.dir || (t.direction === 1 ? 'LONG' : 'SHORT')).toUpperCase();
+  const cum = equity[hover.idx] ?? 0;
+  const mfeT = Number(t.mfe_ticks ?? 0);
+  const maeT = Number(t.mae_ticks ?? 0);
+  const qty  = Number(t.size ?? t.qty ?? 1);
+  return {
+    n:      hover.idx + 1,
+    dir,
+    cum,
+    mfeT,
+    maeT,
+    mfeUsd: mfeT * TICK_VALUE_USD * qty,
+    maeUsd: maeT * TICK_VALUE_USD * qty,
+    ts:     t.entry_time ? new Date(t.entry_time * 1000) : null,
+    exit_reason: t.exit_reason || t.reason || '',
+  };
+}
+
+// TV-style floating tooltip: trade #, dir, cumulative P&L, favorable
+// + adverse excursion (ticks AND $), entry timestamp.
+function TradeTip({ data, x, y }) {
+  // Position so the tooltip sits above-right of the cursor without
+  // colliding with it. Clamps inside the parent panel.
+  const W = 230, H = 130;
+  const left = Math.min(Math.max(8, x + 14), 9999);    // outer container clips
+  const top  = Math.max(8, y - H - 10);
+  return (
+    <div className="absolute z-30 pointer-events-none"
+         style={{ left, top, width: W, minHeight: H }}>
+      <div className="bg-panel/95 backdrop-blur-sm border border-border rounded shadow-2xl px-3 py-2 text-[11px]">
+        <div className="text-muted text-center pb-1 border-b border-border/40 mb-1.5">
+          Trade #{data.n}{' '}
+          <span className={data.dir.startsWith('L') ? 'text-long' : 'text-short'}>
+            {data.dir.charAt(0) + data.dir.slice(1).toLowerCase()}
+          </span>
+        </div>
+        <Row label="Cumulative P&L"
+             dot="#26a69a"
+             value={fmtUSD(data.cum)}
+             cls={data.cum >= 0 ? 'text-long' : 'text-short'} />
+        <Row label="Favorable excursion"
+             dot="#26a69a"
+             value={`${fmtUSD(data.mfeUsd)} (${data.mfeT}t)`}
+             cls="text-long" />
+        <Row label="Adverse excursion"
+             dot="#ef5350"
+             value={`${fmtUSD(data.maeUsd)} (${data.maeT}t)`}
+             cls="text-short" />
+        {data.ts && (
+          <div className="text-muted text-[10px] text-center pt-1">
+            {data.ts.toLocaleString([], {
+              weekday: 'short', month: 'short', day: '2-digit',
+              year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+            })}
+          </div>
+        )}
+        {data.exit_reason && (
+          <div className="text-muted/60 text-[9px] text-center uppercase tracking-wide">
+            exit {String(data.exit_reason).toLowerCase()}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, dot, value, cls = '' }) {
+  return (
+    <div className="flex items-center justify-between py-px tnum">
+      <span className="flex items-center gap-1.5 text-muted">
+        <span className="w-1.5 h-1.5 rounded-full" style={{ background: dot }} />
+        {label}
+      </span>
+      <span className={cls + ' font-semibold'}>{value}</span>
     </div>
   );
 }
