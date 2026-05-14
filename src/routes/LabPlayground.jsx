@@ -625,10 +625,14 @@ function EquityCurve({ stats, trades, selectedTradeKey, setSelectedTradeKey }) {
         })}
         {/* Equity line on top */}
         <path d={path} fill="none" stroke={stroke} strokeWidth="1.5" />
-        {/* Selected-trade pin (from chart click or here-click) */}
+        {/* Selected-trade pin (from chart click or here-click). Re-keyed
+            on selectedTradeKey so the .equity-pin CSS animation
+            restarts -- exponential fade with ~1.2s half-life. */}
         {selectedIdx >= 0 && (
-          <line x1={xOf(selectedIdx)} y1={0} x2={xOf(selectedIdx)} y2={H}
-                stroke="#facc15" strokeWidth="1" opacity="0.85" />
+          <line key={selectedTradeKey}
+                className="equity-pin"
+                x1={xOf(selectedIdx)} y1={0} x2={xOf(selectedIdx)} y2={H}
+                stroke="#facc15" strokeWidth="1" />
         )}
         {/* Hover crosshair */}
         {hover && (

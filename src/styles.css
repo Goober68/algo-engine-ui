@@ -103,3 +103,22 @@ input[type=range].dual-range::-webkit-slider-runnable-track { background: transp
 input[type=range].dual-range::-moz-range-track             { background: transparent; border-color: transparent; }
 input[type=range].dual-range::-webkit-slider-thumb { pointer-events: auto; }
 input[type=range].dual-range::-moz-range-thumb    { pointer-events: auto; }
+
+/*
+ * Selected-trade pin in the equity panel. After a click, the yellow
+ * vertical bar fades exponentially toward 0 (half-life ≈ 1.2 s, total
+ * decay ≈ 6 s) so the link between bar-click and chart-pan stays
+ * visible just long enough to confirm but doesn't permanently litter
+ * the equity. Restart by re-keying the element on selectedTradeKey.
+ */
+@keyframes pin-fade {
+  0%   { opacity: 0.85; }
+  20%  { opacity: 0.42; }
+  40%  { opacity: 0.21; }
+  60%  { opacity: 0.10; }
+  80%  { opacity: 0.05; }
+  100% { opacity: 0; }
+}
+.equity-pin {
+  animation: pin-fade 6s ease-out forwards;
+}
