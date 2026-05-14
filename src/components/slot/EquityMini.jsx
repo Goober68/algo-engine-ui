@@ -14,7 +14,7 @@ const POS_COLOR = '#22c55e';   // green-500 -> period up
 const NEG_COLOR = '#ef4444';   // red-500   -> period down
 
 export default function EquityMini({ data }) {
-  const series = useMemo(() => buildEquity(data), [data]);
+  const { series, counts } = useMemo(() => buildEquity(data), [data]);
   const last   = series.length ? series[series.length - 1] : { algo: 0, broker: 0 };
   const algoColor   = (last.algo   ?? 0) >= 0 ? POS_COLOR : NEG_COLOR;
   const brokerColor = (last.broker ?? 0) >= 0 ? POS_COLOR : NEG_COLOR;
@@ -22,8 +22,8 @@ export default function EquityMini({ data }) {
     <div className="w-full h-full px-2 pt-1 pb-0.5 flex flex-col">
       <div className="flex items-baseline gap-3 text-[10px] text-muted tnum mb-0.5">
         <span>EQUITY</span>
-        <LegendItem label="algo"   color={algoColor}   dashed value={fmt(last.algo)} />
-        <LegendItem label="broker" color={brokerColor}        value={fmt(last.broker)} />
+        <LegendItem label="algo"   color={algoColor}   dashed count={counts.algo}   value={fmt(last.algo)} />
+        <LegendItem label="broker" color={brokerColor}        count={counts.broker} value={fmt(last.broker)} />
       </div>
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
@@ -57,20 +57,20 @@ export default function EquityMini({ data }) {
   );
 }
 
-// One header chip: swatch + label + dollar value. Label stays in
-// the muted/normal text color so the eye doesn't double-encode the
-// sign on top of the swatch+value already carrying it. Whole chip
-// gets the opacity (algo's "ghost" dimming wraps swatch + word +
-// value together, so they read as one logical unit).
-function LegendItem({ label, color, opacity = 1, dashed, value }) {
+// One header chip: swatch + label + (count) + dollar value. Label
+// stays muted so the eye doesn't double-encode the sign on top of
+// the swatch+value already carrying it. Count is parens-wrapped
+// muted so it sits between label and value without competing.
+function LegendItem({ label, color, dashed, count, value }) {
   return (
-    <span className="inline-flex items-baseline gap-1" style={{ opacity }}>
+    <span className="inline-flex items-baseline gap-1">
       <svg width="14" height="3" style={{ alignSelf: 'center' }}>
         <line x1="0" y1="1.5" x2="14" y2="1.5"
               stroke={color} strokeWidth="1.4"
               strokeDasharray={dashed ? '2 3' : undefined} />
       </svg>
       <span>{label}</span>
+      {count != null && <span className="text-muted">({count})</span>}
       <span style={{ color }}>{value}</span>
     </span>
   );
@@ -89,28 +89,31 @@ function LegendItem({ label, color, opacity = 1, dashed, value }) {
 function buildEquity({ trades = [], broker = [] }) {
   const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
   const events = [];
+  let algoCount = 0, brokerCount = 0;
   for (const t of trades) {
     if (t.pnl == null || !t.exit_ts) continue;
     const ms = t.exit_ts / 1e6;
     if (ms < cutoffMs) continue;
     events.push({ ts: ms, kind: 'algo', pnl: t.pnl });
+    algoCount++;
   }
   for (const b of broker) {
     if (b.pnl == null || !b.exit_ts) continue;
     const ms = b.exit_ts / 1e6;
     if (ms < cutoffMs) continue;
     events.push({ ts: ms, kind: 'broker', pnl: b.pnl });
+    brokerCount++;
   }
   events.sort((a, b) => a.ts - b.ts);
 
   let algoEq = 0, brEq = 0;
-  const out = [{ ts: cutoffMs, algo: 0, broker: 0 }];
+  const series = [{ ts: cutoffMs, algo: 0, broker: 0 }];
   for (const e of events) {
     if (e.kind === 'algo')   algoEq += e.pnl;
     if (e.kind === 'broker') brEq   += e.pnl;
-    out.push({ ts: e.ts, algo: algoEq, broker: brEq });
+    series.push({ ts: e.ts, algo: algoEq, broker: brEq });
   }
-  return out;
+  return { series, counts: { algo: algoCount, broker: brokerCount } };
 }
 
 function fmt(v) {
