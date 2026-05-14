@@ -61,7 +61,7 @@ function tickCacheSet(key, value) {
   }
 }
 
-export default function TradeTickModal({ trade, decision, audit, onClose, onPrev, onNext }) {
+export default function TradeTickModal({ trade, algoTrade, decision, audit, onClose, onPrev, onNext }) {
   const [ticks, setTicks] = useState(null);   // null = loading, [] = no data, [...] = ok
   const [err, setErr] = useState(null);
   const [source, setSource] = useState(null); // 'coord' | 'archive' | null
@@ -206,6 +206,7 @@ export default function TradeTickModal({ trade, decision, audit, onClose, onPrev
           err={err}
           source={source}
           trade={trade}
+          algoTrade={algoTrade}
           slPx={slPx}
           fromNs={fromNs}
           toNs={toNs}
@@ -280,7 +281,7 @@ function WebhookPanel({ audit, trade }) {
   );
 }
 
-function TickChart({ ticks, err, source, trade, slPx, fromNs, toNs }) {
+function TickChart({ ticks, err, source, trade, algoTrade, slPx, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
 
@@ -288,12 +289,12 @@ function TickChart({ ticks, err, source, trade, slPx, fromNs, toNs }) {
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
     if (!wrap || !cv) return;
-    const draw = () => drawTickChart(cv, wrap, ticks, trade, slPx, fromNs, toNs);
+    const draw = () => drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs);
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [ticks, trade, slPx, fromNs, toNs]);
+  }, [ticks, trade, algoTrade, slPx, fromNs, toNs]);
 
   // Per prime directive: surface where the ticks actually came from.
   // Live ring vs disk archive is meaningful for "is this what the
@@ -335,7 +336,7 @@ function TickChart({ ticks, err, source, trade, slPx, fromNs, toNs }) {
   );
 }
 
-function drawTickChart(cv, wrap, ticks, trade, slPx, fromNs, toNs) {
+function drawTickChart(cv, wrap, ticks, trade, algoTrade, slPx, fromNs, toNs) {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wrap.clientWidth;
   const cssH = wrap.clientHeight;
@@ -363,6 +364,8 @@ function drawTickChart(cv, wrap, ticks, trade, slPx, fromNs, toNs) {
   }
   if (trade.entry_px) { pmin = Math.min(pmin, trade.entry_px); pmax = Math.max(pmax, trade.entry_px); }
   if (trade.exit_px) { pmin = Math.min(pmin, trade.exit_px); pmax = Math.max(pmax, trade.exit_px); }
+  if (algoTrade?.entry_px) { pmin = Math.min(pmin, algoTrade.entry_px); pmax = Math.max(pmax, algoTrade.entry_px); }
+  if (algoTrade?.exit_px)  { pmin = Math.min(pmin, algoTrade.exit_px);  pmax = Math.max(pmax, algoTrade.exit_px); }
   if (slPx) { pmin = Math.min(pmin, slPx); pmax = Math.max(pmax, slPx); }
   const pad = (pmax - pmin) * 0.05 || 0.5;
   pmin -= pad; pmax += pad;
@@ -408,7 +411,7 @@ function drawTickChart(cv, wrap, ticks, trade, slPx, fromNs, toNs) {
   drawLine(ctx, ticks, xT, yP, 'bid', '#7fc6d4');
   drawLine(ctx, ticks, xT, yP, 'ask', '#d4be7a');
 
-  // Entry marker
+  // Broker entry/exit (solid) — the ground truth for what executed.
   if (trade.entry_ts) {
     const ex = xT(trade.entry_ts);
     const ey = yP(trade.entry_px);
@@ -422,6 +425,19 @@ function drawTickChart(cv, wrap, ticks, trade, slPx, fromNs, toNs) {
     const xx = xT(trade.exit_ts);
     const yy = yP(trade.exit_px);
     drawArrow(ctx, xx, yy, trade.pnl > 0 ? '#7fff00' : '#ef5350', 'left');
+  }
+  // Algo-sim entry/exit (hollow) — what the runner THOUGHT it filled at.
+  // Compare to the solid broker arrow at the same position to see slip
+  // (horizontal gap = time-of-fill diff; vertical gap = px diff).
+  if (algoTrade?.entry_ts) {
+    const ex = xT(algoTrade.entry_ts);
+    const ey = yP(algoTrade.entry_px);
+    drawArrow(ctx, ex, ey, algoTrade.side === 'long' ? '#1976d2' : '#ffff00', 'right', /*hollow*/ true);
+  }
+  if (algoTrade?.exit_ts && algoTrade?.exit_px) {
+    const xx = xT(algoTrade.exit_ts);
+    const yy = yP(algoTrade.exit_px);
+    drawArrow(ctx, xx, yy, (algoTrade.pnl ?? 0) > 0 ? '#7fff00' : '#ef5350', 'left', /*hollow*/ true);
   }
 }
 
@@ -438,8 +454,7 @@ function drawLine(ctx, ticks, xT, yP, key, color) {
   ctx.stroke();
 }
 
-function drawArrow(ctx, x, y, color, dir) {
-  ctx.fillStyle = color;
+function drawArrow(ctx, x, y, color, dir, hollow = false) {
   ctx.beginPath();
   if (dir === 'right') {
     ctx.moveTo(x, y);
@@ -451,10 +466,17 @@ function drawArrow(ctx, x, y, color, dir) {
     ctx.lineTo(x + 14, y + 8);
   }
   ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  if (hollow) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 }
 
 function KV({ k, v, cls = '' }) {

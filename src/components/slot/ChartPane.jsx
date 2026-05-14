@@ -737,12 +737,18 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
     return xL + (alpha - 0.5) * (xR - xL);
   };
 
-  // Trade markers are sim-generated fills (OptimisticLimitFillModel
-  // synthesizing entries/exits from the algo's intents against the
-  // tick replay). The `data.broker` name is misleading — it's the
-  // SIM's "broker", not Tradovate's. `entry_ts` / `exit_ts` carry the
-  // sub-bar timestamp at which the simulator booked the fill, so
-  // position them sub-bar via subBarX().
+  // Two layers of triangles, drawn back-to-front:
+  //   - data.broker (solid): real broker fills (relay-pulled in live;
+  //     sim fills in historical replay where broker == trades). These
+  //     are the ground truth for what actually executed.
+  //   - data.trades (hollow): algo-sim fills the runner emitted. When
+  //     algo + broker pair within MATCH_AHEAD_NS the hollow stacks on
+  //     the solid (matched fill); when they diverge horizontally the
+  //     gap = slip; when one is missing the asymmetry shows missed POSTs
+  //     or manual broker entries.
+  //
+  // Sub-bar positioning via subBarX(): both timestamps land at the
+  // simulator's booked / broker's executed instant, not the bar center.
   let drawn = 0;
   for (const t of inRange) {
     const isLong = t.side === 'long';
@@ -761,6 +767,30 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
       if (xOut != null && yOut != null) {
         drawArrow(ctx, xOut, yOut, exitColor, 'left', isSel);
         drawn++;
+      }
+    }
+  }
+  // Algo-sim layer — hollow triangles overlaid on the broker layer.
+  // Same in-range filter so off-window algos don't pile up.
+  const algos = data.trades || [];
+  const inRangeAlgos = bars.length
+    ? algos.filter(t => t.entry_ts >= bars[0].ts_ns
+                     && t.entry_ts < bars[bars.length - 1].ts_ns + tf * 1e9)
+    : algos;
+  for (const t of inRangeAlgos) {
+    const isLong = t.side === 'long';
+    const entryColor = isLong ? '#1976d2' : '#ffff00';
+    const exitColor  = (t.pnl ?? 0) > 0 ? '#7fff00' : '#ef5350';
+    const xIn  = subBarX(t.entry_ts);
+    const yIn  = candles.priceToCoordinate(t.entry_px);
+    if (xIn != null && yIn != null) {
+      drawArrow(ctx, xIn, yIn, entryColor, 'right', false, /*hollow*/ true);
+    }
+    if (t.exit_ts && t.exit_px != null) {
+      const xOut = subBarX(t.exit_ts);
+      const yOut = candles.priceToCoordinate(t.exit_px);
+      if (xOut != null && yOut != null) {
+        drawArrow(ctx, xOut, yOut, exitColor, 'left', false, /*hollow*/ true);
       }
     }
   }
@@ -951,25 +981,32 @@ function drawBlockMarkers(ctx, chart, candles, data, tf, snap) {
   ctx.globalAlpha = 1.0;
 }
 
-function drawArrow(ctx, x, y, color, dir, highlighted) {
+function drawArrow(ctx, x, y, color, dir, highlighted, hollow = false) {
   const len = highlighted ? 22 : 16;
   const h   = highlighted ? 12 : 8;
   // Halo first — translucent dark backing makes the arrow pop against
-  // bright candles. Drawn slightly larger than the fill.
-  ctx.beginPath();
-  if (dir === 'right') {
-    ctx.moveTo(x + 2,    y);
-    ctx.lineTo(x - len - 2, y - h - 2);
-    ctx.lineTo(x - len - 2, y + h + 2);
-  } else {
-    ctx.moveTo(x - 2,    y);
-    ctx.lineTo(x + len + 2, y - h - 2);
-    ctx.lineTo(x + len + 2, y + h + 2);
+  // bright candles. Drawn slightly larger than the fill. Skip for the
+  // hollow variant: the colored stroke against the candles is enough,
+  // and a dark halo would obscure the see-through middle that's the
+  // whole point of hollow.
+  if (!hollow) {
+    ctx.beginPath();
+    if (dir === 'right') {
+      ctx.moveTo(x + 2,    y);
+      ctx.lineTo(x - len - 2, y - h - 2);
+      ctx.lineTo(x - len - 2, y + h + 2);
+    } else {
+      ctx.moveTo(x - 2,    y);
+      ctx.lineTo(x + len + 2, y - h - 2);
+      ctx.lineTo(x + len + 2, y + h + 2);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fill();
   }
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(0,0,0,0.65)';
-  ctx.fill();
-  // Colored fill on top
+  // Body — filled triangle for broker-truth fills, stroke-only for
+  // algo-sim. Stack matched pairs (same color, same position) overlay
+  // cleanly; mismatches separate horizontally / one side missing.
   ctx.beginPath();
   if (dir === 'right') {
     ctx.moveTo(x, y);
@@ -981,8 +1018,14 @@ function drawArrow(ctx, x, y, color, dir, highlighted) {
     ctx.lineTo(x + len, y + h);
   }
   ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
+  if (hollow) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
   if (highlighted) {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;

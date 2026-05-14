@@ -113,6 +113,13 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
   // Pick the nearest unfilled-by-time audit before the entry.
   const audit = findAuditForTrade(data.audit || [], trade);
 
+  // Algo-sim counterpart to the clicked broker trade -- pair on
+  // side+qty within a 5-min forward window (matches the TradeTable
+  // pairing tolerance). When found, the modal renders both: solid
+  // broker + hollow algo. Slip / missed-fill becomes visible at the
+  // tick scale where the chart's bar resolution can't show it.
+  const algoTrade = findAlgoCounterpart(data.trades || [], trade);
+
   const sorted = [...data.broker].sort((a, b) => a.entry_ts - b.entry_ts);
   const idx = sorted.findIndex(t => t.entry_ts === modalTradeKey);
   const prev = idx > 0                ? sorted[idx - 1] : null;
@@ -121,6 +128,7 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
   return (
     <TradeTickModal
       trade={trade}
+      algoTrade={algoTrade}
       decision={decision}
       audit={audit}
       onClose={onClose}
@@ -128,6 +136,20 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
       onNext={next ? () => onJump(next.entry_ts) : null}
     />
   );
+}
+
+// Find the algo-sim trade closest to a broker trade, side + qty matched.
+// 5-min window mirrors TradeTable's MATCH_AHEAD_NS.
+function findAlgoCounterpart(algos, brokerTrade) {
+  const WIN_NS = 5 * 60 * 1_000_000_000;
+  let best = null, bestD = Infinity;
+  for (const a of algos) {
+    if (a.side !== brokerTrade.side || a.qty !== brokerTrade.qty) continue;
+    const d = Math.abs(a.entry_ts - brokerTrade.entry_ts);
+    if (d > WIN_NS) continue;
+    if (d < bestD) { bestD = d; best = a; }
+  }
+  return best;
 }
 
 // Walk audit POSTs and find the one that caused this broker fill.
