@@ -53,12 +53,12 @@ const META_KEYS = new Set(META_FIELDS.map(f => f.name));
 
 // Mirror of xovdDefaultSessions() in backtester/runtime/sessionMask.h.
 // Used as the placeholder shape until engine-claude lifts these into
-// per-slot config (Stream ask filed today). Times in IANA-named TZ
-// (default America/New_York, matching the historical NY ET assumption).
+// per-slot config (Stream ask filed today). Times interpreted in the
+// section-level `tz` (separate state).
 const DEFAULT_SESSIONS = [
-  { startHHMM: 630,  endHHMM: 1155, tz: DEFAULT_MARKET_TZ, label: 'S1' },
-  { startHHMM: 1205, endHHMM: 1530, tz: DEFAULT_MARKET_TZ, label: 'S2' },
-  { startHHMM: 1705, endHHMM: 155,  tz: DEFAULT_MARKET_TZ, label: 'S3 (wraps midnight)' },
+  { startHHMM: 630,  endHHMM: 1155, label: 'S1' },
+  { startHHMM: 1205, endHHMM: 1530, label: 'S2' },
+  { startHHMM: 1705, endHHMM: 155,  label: 'S3 (wraps midnight)' },
 ];
 
 export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }) {
@@ -177,10 +177,12 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
                            defaultOpen={false}>
               <SessionWindowsEditor
                 mode={values.__sessionMode || 'include'}
+                tz={values.__sessionTz || DEFAULT_MARKET_TZ}
                 windows={values.__sessionWindows || DEFAULT_SESSIONS}
-                onChange={(m, w) => setValues(prev => ({
+                onChange={(m, t, w) => setValues(prev => ({
                   ...prev,
                   __sessionMode: m,
+                  __sessionTz: t,
                   __sessionWindows: w,
                   __sessionDirty: true,
                 }))}
@@ -359,11 +361,12 @@ function shallowEq(a, b) {
 // this section is shape-preview that lets Niall see the editor UX +
 // validate the model before engine-claude commits to a schema.
 // ──────────────────────────────────────────────────────────────────────
-function SessionWindowsEditor({ mode, windows, onChange }) {
-  const setMode = (m) => onChange(m, windows);
-  const setWindows = (w) => onChange(mode, w);
+function SessionWindowsEditor({ mode, tz, windows, onChange }) {
+  const setMode = (m) => onChange(m, tz, windows);
+  const setTz = (t) => onChange(mode, t, windows);
+  const setWindows = (w) => onChange(mode, tz, w);
   const addWindow = () => setWindows([...windows, {
-    startHHMM: 900, endHHMM: 1000, tz: DEFAULT_MARKET_TZ, label: '',
+    startHHMM: 900, endHHMM: 1000, label: '',
   }]);
   const removeWindow = (i) => setWindows(windows.filter((_, j) => j !== i));
   const updateWindow = (i, patch) => setWindows(
@@ -376,22 +379,22 @@ function SessionWindowsEditor({ mode, windows, onChange }) {
                    active={mode === 'include'} onClick={() => setMode('include')} />
         <ModeRadio label="Allow all except listed" value="exclude"
                    active={mode === 'exclude'} onClick={() => setMode('exclude')} />
-        <span className="text-muted ml-auto">per-window TZ (IANA)</span>
+        <div className="ml-auto flex items-center gap-1">
+          <span className="text-[10px] uppercase text-muted tracking-wide">TZ</span>
+          <TzSelect value={tz} onChange={setTz} />
+        </div>
       </div>
       <div className="border border-border rounded">
-        <div className="grid grid-cols-[68px_68px_88px_1fr_24px] gap-1 px-2 py-1 text-[10px] uppercase text-muted tracking-wide bg-bg/40">
+        <div className="grid grid-cols-[88px_88px_1fr_24px] gap-1 px-2 py-1 text-[10px] uppercase text-muted tracking-wide bg-bg/40">
           <span>Start</span>
           <span>End</span>
-          <span>Market TZ</span>
           <span>Label</span>
           <span></span>
         </div>
         {windows.map((w, i) => (
-          <div key={i} className="grid grid-cols-[68px_68px_88px_1fr_24px] gap-1 px-2 py-1 items-center border-t border-border/30">
+          <div key={i} className="grid grid-cols-[88px_88px_1fr_24px] gap-1 px-2 py-1 items-center border-t border-border/30">
             <HhmmInput value={w.startHHMM} onChange={(v) => updateWindow(i, { startHHMM: v })} />
             <HhmmInput value={w.endHHMM}   onChange={(v) => updateWindow(i, { endHHMM: v })} />
-            <TzSelect value={w.tz || DEFAULT_MARKET_TZ}
-                      onChange={(tz) => updateWindow(i, { tz })} />
             <input
               type="text"
               value={w.label || ''}
@@ -419,7 +422,7 @@ function SessionWindowsEditor({ mode, windows, onChange }) {
         <code className="text-text bg-bg/60 px-1 rounded">xovdDefaultSessions()</code>
         {' '} (hardcoded NY ET, requires rebuild) today. This editor
         is shape-preview pending Stream ask: lift sessions to per-slot
-        cfg with explicit per-window IANA TZ. Engine-side must resolve
+        cfg with one IANA TZ for all windows. Engine-side must resolve
         TZ via tzdata so DST flips are correct -- never assume EST/EDT
         from a label string.
       </div>
