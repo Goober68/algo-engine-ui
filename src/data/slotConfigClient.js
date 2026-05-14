@@ -1,20 +1,24 @@
 // Per-slot live-config client. Reads the runner's currently-deployed
 // strategy params for one slot (so the SlotConfigDrawer can populate
-// its editor with the real baseline), and stubs the apply path until
-// engine-claude ships POST /r/{rid}/s/{N}/reinit.
+// its editor with the real baseline) and POSTs edits to coord, which
+// bridges to the engine via the file-protocol reinit.
 //
-// Fields that genuinely need a runner restart even though they're in
-// the schema (per engine-claude's L130 audit): the 7 indicator-shape
-// keys -- the streaming Rma/Sma/Ema/Atr accumulators bake alpha and
-// window size at xovdV1Init, so changing them mid-flight gives ~5×
-// period bars of garbage MAs. Drawer disables these with a tooltip
-// explaining why.
+// The 7 indicator-shape keys (fastPeriod/slowPeriod/atrPeriod,
+// fast/slowMaType, fast/slowSource) used to require a runner restart
+// because streaming Rma/Sma/Ema/Atr accumulators bake alpha + window
+// at xovdV1Init. Engine ad16711 lifted that restriction by warmup-
+// replaying the runner's 500-bar ring with the new cfg before swap-in,
+// so they're now hot-swappable like every other param. Ack returns
+// shape_changed:true on success so the UI can surface the slower
+// (~ms vs sub-ms) apply path. We keep the Set around to drive a soft
+// visual hint that "this triggers a warmup-replay" -- still distinct
+// from a same-shape reinit.
 
 import { activeCoordFor } from './coords';
 
 const coordBase = () => activeCoordFor('runners')?.url || '';
 
-export const RESTART_REQUIRED_KEYS = new Set([
+export const SHAPE_CHANGE_KEYS = new Set([
   'fastPeriod', 'slowPeriod', 'atrPeriod',
   'fastMaType', 'slowMaType',
   'fastSource', 'slowSource',

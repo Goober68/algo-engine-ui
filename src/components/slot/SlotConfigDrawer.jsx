@@ -12,10 +12,13 @@
 // see your intended diff, and the Apply button surfaces the engine
 // dependency rather than silently no-op'ing.
 //
-// Restart-required fields (the 7 indicator-shape keys: fastPeriod,
-// slowPeriod, atrPeriod, fast/slowMaType, fast/slowSource) are flagged
-// inline because they need a runner restart -- the streaming Rma/Sma/
-// Ema/Atr accumulators bake alpha + window at xovdV1Init.
+// Shape-change fields (the 7 indicator-shape keys: fastPeriod,
+// slowPeriod, atrPeriod, fast/slowMaType, fast/slowSource) used to
+// require a runner restart but engine ad16711 made them hot-swappable
+// via warmup-replay against a 500-bar ring. Still flagged with a soft
+// stripe so the operator knows the apply path is heavier (~ms vs
+// sub-ms) and that very-first-boot reinits before bars have closed
+// will reject with a "wait ~5×period bars or restart" error.
 
 import { useEffect, useMemo, useState } from 'react';
 import ParamRow from '../schema/ParamRow';
@@ -25,7 +28,7 @@ import { fetchStrategySchema } from '../../data/strategySchema';
 import {
   fetchSlotConfig,
   applySlotConfig,
-  RESTART_REQUIRED_KEYS,
+  SHAPE_CHANGE_KEYS,
 } from '../../data/slotConfigClient';
 import { MARKET_SESSIONS, DEFAULT_MARKET_TZ } from '../../data/marketSessions';
 
@@ -136,7 +139,9 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
       }
       const ack = await applySlotConfig(runnerId, slotIdx, fullCfg);
       if (ack.ok) {
-        setToast({ ok: true, text: `Applied ${dirtyKeys.size} change(s)` });
+        setToast({ ok: true, text: ack.shape_changed
+          ? `Applied ${dirtyKeys.size} change(s) — indicators warmup-replayed`
+          : `Applied ${dirtyKeys.size} change(s)` });
         // Promote the just-applied values to the new baseline so the
         // dirty-edit highlights clear.
         setBaseline({ ...baseline, ...Object.fromEntries(
@@ -144,11 +149,13 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
             .map(k => [k, values[k]])
         )});
       } else {
+        // Engine error string is operator-readable -- pass through.
+        // Common reject paths: unknown key (parse error), or shape-
+        // change reinit before the bar ring is populated ("wait ~5x
+        // period bars or restart").
         setToast({
           ok: false,
-          text: ack.shape_changed
-            ? `Shape change rejected: ${ack.error || 'indicator-shape fields require a runner restart'}`
-            : `Apply failed: ${ack.error || 'unknown error'}`,
+          text: `Apply failed: ${ack.error || 'unknown error'}`,
         });
       }
     } catch (e) {
@@ -230,9 +237,9 @@ export default function SlotConfigDrawer({ runnerId, slotIdx, account, onClose }
                 if (!def.type) return null;   // not in schema (deployment-only)
                 const active = paramActive(def, values);
                 const isDirty = dirtyKeys.has(key);
-                const restartReq = RESTART_REQUIRED_KEYS.has(key);
+                const shapeChange = SHAPE_CHANGE_KEYS.has(key);
                 return (
-                  <RowFrame key={key} dirty={isDirty} restart={restartReq}>
+                  <RowFrame key={key} dirty={isDirty} shapeChange={shapeChange}>
                     <ParamRow
                       schemaField={def}
                       value={values[key]}
@@ -305,14 +312,17 @@ function Footer({ dirty, busy, onApply, onReset, onClose, toast }) {
 }
 
 // Wraps a ParamRow with a colored left-edge stripe so dirty edits +
-// restart-required fields are visible at a glance.
-function RowFrame({ children, dirty, restart }) {
+// shape-change fields are visible at a glance. Shape-change uses a
+// dim slate stripe (not the old amber) since these fields ARE hot-
+// swappable now -- the stripe just signals "this triggers warmup-
+// replay, not a same-shape reinit."
+function RowFrame({ children, dirty, shapeChange }) {
   let stripe = 'border-l-2 border-transparent';
-  if (dirty)        stripe = 'border-l-2 border-accent';
-  else if (restart) stripe = 'border-l-2 border-yellow-600/70';
+  if (dirty)            stripe = 'border-l-2 border-accent';
+  else if (shapeChange) stripe = 'border-l-2 border-slate-500/40';
   return (
-    <div className={stripe} title={restart && !dirty
-      ? 'Indicator-shape field — runner restart required to apply changes'
+    <div className={stripe} title={shapeChange && !dirty
+      ? 'Indicator-shape field — apply triggers warmup-replay (~ms cost)'
       : undefined}>
       {children}
     </div>
