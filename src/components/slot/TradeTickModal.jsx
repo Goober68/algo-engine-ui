@@ -248,8 +248,19 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           </div>
         )}
 
-        {/* Webhook bracket (what was POSTed to the relay for this trade) */}
-        {!adHoc && audit && <WebhookPanel audit={audit} trade={trade} />}
+        {/* Webhook bracket (what was POSTed to the relay for this trade)
+            sits on the left; chart legend rides on the right. Legend is
+            always visible; webhook only when we have an audit match. */}
+        <div className="flex gap-3 mb-3">
+          {!adHoc && audit && (
+            <div className="flex-1 min-w-0">
+              <WebhookPanel audit={audit} trade={trade} />
+            </div>
+          )}
+          <div className={(!adHoc && audit) ? 'shrink-0' : 'flex-1'}>
+            <ChartLegendPanel />
+          </div>
+        </div>
 
         {/* Tick chart */}
         <TickChart
@@ -317,7 +328,7 @@ function WebhookPanel({ audit, trade }) {
   const tif = req.time_in_force ? `${req.time_in_force}${req.expire_at ? ' ' + req.expire_at + 's' : ''}` : '—';
 
   return (
-    <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs tnum mb-3 px-2 py-2 bg-bg/50 rounded">
+    <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs tnum px-2 py-2 bg-bg/50 rounded">
       <div className="col-span-2 text-[10px] uppercase tracking-wide text-muted mb-1">
         webhook bracket sent to broker
         <span className={`ml-2 ${statusOk ? 'text-long' : 'text-short'}`}>
@@ -341,6 +352,67 @@ function WebhookPanel({ audit, trade }) {
         </pre>
       </details>
     </div>
+  );
+}
+
+// Chart legend panel — what every shape/color on the tick chart means.
+// Rides to the right of WebhookPanel. Stays compact so webhook keeps
+// most of the row width.
+function ChartLegendPanel() {
+  return (
+    <div className="text-[10px] tnum px-2 py-2 bg-bg/50 rounded h-full">
+      <div className="text-[10px] uppercase tracking-wide text-muted mb-1">
+        chart legend
+      </div>
+      <div className="space-y-1">
+        <LegendRow>
+          <LegendSwatch color="#7fc6d4" line />
+          <span>bid</span>
+          <span className="text-muted ml-1">·</span>
+          <LegendSwatch color="#d4be7a" line />
+          <span>ask</span>
+        </LegendRow>
+        <LegendRow>
+          <LegendSwatch color="rgba(127,255,0,0.5)" />
+          <span>buy print (ask lifted)</span>
+        </LegendRow>
+        <LegendRow>
+          <LegendSwatch color="rgba(239,83,80,0.5)" />
+          <span>sell print (bid hit)</span>
+        </LegendRow>
+        <LegendRow>
+          <LegendSwatch color="rgba(127,255,0,0.5)" small />
+          <LegendSwatch color="rgba(127,255,0,0.5)" />
+          <LegendSwatch color="rgba(127,255,0,0.5)" big />
+          <span className="text-muted ml-1">size = radius (log)</span>
+        </LegendRow>
+        <LegendRow>
+          <span className="text-muted italic">prints hidden when window ≥ 30s</span>
+        </LegendRow>
+      </div>
+    </div>
+  );
+}
+
+function LegendRow({ children }) {
+  return <div className="flex items-center gap-1.5">{children}</div>;
+}
+
+function LegendSwatch({ color, line, small, big }) {
+  if (line) {
+    return (
+      <span
+        className="inline-block"
+        style={{ width: 12, height: 2, backgroundColor: color, borderRadius: 1 }}
+      />
+    );
+  }
+  const r = small ? 3 : big ? 9 : 6;
+  return (
+    <span
+      className="inline-block rounded-full"
+      style={{ width: r, height: r, backgroundColor: color }}
+    />
   );
 }
 
@@ -630,28 +702,27 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
   drawLine(ctx, ticks, xT, yP, 'ask', '#d4be7a');
   // Trade prints (kind:'trade' records) -- one filled dot per print.
   // Color = aggressor:
-  //   side=B (bid was hit -> aggressive seller) -> red dot
-  //   side=A (ask was hit -> aggressive buyer)  -> green dot
-  //   side=N (not classified)                   -> grey dot
-  // Radius scales with log(size) so a 1-lot is small and a 50-lot
-  // jumps. Black halo so the dot stays legible over busy quote lines.
-  for (const t of ticks) {
-    if (t.kind !== 'trade') continue;
-    if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
-    if (t.price < pmin || t.price > pmax) continue;
-    const cx = xT(t.ts_ns), cy = yP(t.price);
-    const r = Math.max(2, Math.min(6, 2 + Math.log2((t.size || 1) + 1)));
-    const fill = t.side === 'B' ? '#ef5350'
-              : t.side === 'A' ? '#7fff00'
-              :                  '#7c8190';
-    ctx.beginPath();
-    ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fillStyle = fill;
-    ctx.fill();
+  //   side=B (bid was hit -> aggressive seller) -> red
+  //   side=A (ask was hit -> aggressive buyer)  -> green
+  //   side=N (not classified)                   -> grey
+  // 50% alpha so the bid/ask lines stay readable underneath. Hidden
+  // entirely when the visible window is >= 30s -- at that span the
+  // dots carpet the chart and obscure the b/a lines. Zoom in past
+  // 30s and they fade in.
+  if (spanNs < 30 * 1_000_000_000) {
+    for (const t of ticks) {
+      if (t.kind !== 'trade') continue;
+      if (t.ts_ns < fromNs || t.ts_ns > toNs) continue;
+      if (t.price < pmin || t.price > pmax) continue;
+      const cx = xT(t.ts_ns), cy = yP(t.price);
+      const r = 2 + Math.min(2.5, Math.log2((t.size || 1) + 1) * 0.4);
+      ctx.fillStyle = t.side === 'B' ? 'rgba(239,83,80,0.5)'
+                    : t.side === 'A' ? 'rgba(127,255,0,0.5)'
+                    :                  'rgba(124,129,144,0.5)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Broker entry/exit (solid) — the ground truth for what executed.
