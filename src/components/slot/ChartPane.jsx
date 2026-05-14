@@ -127,17 +127,16 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
     // resolve to the broker side (canonical) -- the modal then
     // surfaces the algo counterpart in its summary.
     //
-    // Match window = natural bar OR next bar -- subBarX renders
-    // markers smoothly from bar X center (alpha=0) to bar X+1 center
-    // (alpha=1), so a high-alpha entry has its triangle visually on
-    // bar X+1 even though entry_ts floors to bar X.
+    // Match by exact bar bucket: subBarX renders markers within the
+    // bar they actually fired in (10% inset on each edge), so the
+    // entry-bar bucket and the visual marker line up 1:1.
     chart.subscribeClick((param) => {
       if (!param?.time) return;
       const tfNow = currentTfRef.current;
       const clickSec = Number(param.time);
       const matches = (t) => {
         const eb = Math.floor(t.entry_ts / 1e9 / tfNow) * tfNow;
-        return eb === clickSec || eb + tfNow === clickSec;
+        return eb === clickSec;
       };
       // Prefer real broker fill > real algo intent > ad-hoc (just the
       // bar's open ts, no trade context). Ad-hoc clicks open the tick
@@ -746,15 +745,24 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
 
   // Sub-bar X-coord for an event whose timestamp falls inside bar X.
   // lightweight-charts renders each bar's body CENTERED on its
-  // time-coordinate (= timeToCoordinate(bar.ts)). For an event at
-  // alpha=0 (= the bar's first tick), the natural visual home is the
-  // bar's CENTER, not its left edge -- markers at the left edge sit
-  // on the column boundary and read as belonging to the previous bar
-  // (off-by-one symptom). So map [alpha=0, alpha=1] -> [bar X center,
-  // bar X+1 center] linearly across the gap. Late-bar events (alpha
-  // close to 1) end up on bar X+1, which is also visually correct
-  // because limit fills that bridge a bar boundary belong to the
-  // bar they filled in, not the bar that placed the order.
+  // time-coordinate (= timeToCoordinate(bar.ts)), so bar X visually
+  // occupies [xL - barWidth/2, xL + barWidth/2] where barWidth =
+  // (xR - xL) is the gap between consecutive bar centers.
+  //
+  // Two failure modes to dodge:
+  //   - alpha=0 mapped to xL - barWidth/2 (the literal left edge)
+  //     puts the marker on the boundary line between bar X-1 and
+  //     bar X -- reads as the previous bar (the original "off-by-
+  //     one symptom" the prior version was fixing).
+  //   - alpha=1 mapped to xL + barWidth/2 (literal right edge) /
+  //     OR worse to the next bar's center (the prior version's
+  //     bug) -- a trade that fired in the last second of bar X
+  //     would visually land on bar X+1.
+  //
+  // Compromise: 10% inset from each edge. alpha 0..1 maps to
+  // [xL - 0.4*barWidth, xL + 0.4*barWidth] -- always visually
+  // INSIDE the bar the event fired in, with enough air at each
+  // edge to read unambiguously.
   const subBarX = (tsNs) => {
     const tSec = tsNs / 1e9;
     const tBar = snap(tSec);
@@ -763,7 +771,8 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
     const xR = ts.timeToCoordinate(tBar + tf);
     if (xR == null) return xL;
     const alpha = (tSec - tBar) / tf;
-    return xL + alpha * (xR - xL);
+    const barWidth = xR - xL;
+    return xL + (alpha - 0.5) * 0.8 * barWidth;
   };
 
   // Two layers of triangles, drawn back-to-front:
