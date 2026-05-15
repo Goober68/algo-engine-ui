@@ -269,7 +269,9 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rang
     <div className="bg-panel border-b border-border px-3 py-1 flex items-center gap-3 text-xs">
       <span className="font-semibold text-sm">XOVD Kernel Playground</span>
       <span className={`px-2 py-0.5 rounded text-[10px] border ${statusCls}`}>
-        {wsStatus === 'ready' ? 'session ready' : wsStatus}
+        {wsStatus === 'ready'      ? 'session ready'
+         : wsStatus === 'connecting' ? 'building'
+         : wsStatus}
       </span>
       {sess && (
         <span className="text-muted text-[11px] tnum" title={`session ${sess.session_id}`}>
