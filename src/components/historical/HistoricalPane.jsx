@@ -19,8 +19,11 @@ import TradeTickModal from '../slot/TradeTickModal';
 import Splitter from '../chrome/Splitter';
 import { usePersistedSize } from '../chrome/usePersistedSize';
 import { buildHistoricalData } from '../../data/HistoricalDataProvider';
+import { useActiveCoord } from '../../data/coords';
 
 export default function HistoricalPane({ label, tf, setTf, onChartReady }) {
+  const coord = useActiveCoord('historical');
+  const coordUrl = coord?.url || '';
   const [pane, setPane]                         = useState(null);
   const [filter, setFilter]                     = useState('all');
   const [selectedTradeKey, setSelectedTradeKey] = useState(null);
@@ -37,7 +40,7 @@ export default function HistoricalPane({ label, tf, setTf, onChartReady }) {
 
   const pickServerFile = async (name) => {
     try {
-      const r = await fetch(`/api/historical-files?file=${encodeURIComponent(name)}`);
+      const r = await fetch(`${coordUrl}/historical-files/${encodeURIComponent(name)}`);
       if (!r.ok) throw new Error(`HTTP ${r.status} fetching ${name}`);
       const blob = await r.blob();
       await loadVizFile(new File([blob], name, { type: 'application/json' }));
@@ -147,11 +150,13 @@ function SwapMenu({ activeName, onPick }) {
   const [open, setOpen] = useState(false);
   const [listing, setListing] = useState(null);
   const rootRef = useRef(null);
+  const coord = useActiveCoord('historical');
+  const coordUrl = coord?.url || '';
 
   useEffect(() => {
     if (!open) return;
     if (!listing) {
-      fetch('/api/historical-files')
+      fetch(`${coordUrl}/historical-files`)
         .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
         .then(setListing)
         .catch(e => setListing({ entries: [], error: String(e) }));
@@ -225,15 +230,17 @@ function DropZone({ label, onLoaded }) {
   const [loading, setLoading]   = useState(false);
   const [serverFiles, setServerFiles] = useState(null);
   const vizInputRef = useRef(null);
+  const coord = useActiveCoord('historical');
+  const coordUrl = coord?.url || '';
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/historical-files')
+    fetch(`${coordUrl}/historical-files`)
       .then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`))
       .then(d => { if (!cancelled) setServerFiles(d); })
       .catch(e => { if (!cancelled) setServerFiles({ entries: [], error: String(e) }); });
     return () => { cancelled = true; };
-  }, []);
+  }, [coordUrl]);
 
   const loadFile = async (file) => {
     setLoading(true);
@@ -251,7 +258,7 @@ function DropZone({ label, onLoaded }) {
   const pickFromServer = async (name) => {
     try {
       setLoading(true);
-      const r = await fetch(`/api/historical-files?file=${encodeURIComponent(name)}`);
+      const r = await fetch(`${coordUrl}/historical-files/${encodeURIComponent(name)}`);
       if (!r.ok) throw new Error(`fetch ${name}: HTTP ${r.status}`);
       const blob = await r.blob();
       await loadFile(new File([blob], name, { type: 'application/json' }));
