@@ -11,11 +11,13 @@
 
 import { useEffect, useState } from 'react';
 
-// Picker symbols. Coord routes these to the right shard family:
-//   "MNQ"   -> continuous-front-month (MNQ.c.0), 4yr+ history
-//   "MNQM6" -> explicit June 2026 contract, recent days only
-// Lift to a coord endpoint if symbology grows.
-const SYMBOLS = ['MNQ', 'MNQM6'];
+// Picker symbols. Sweep + playground always want continuous front-
+// month for history coverage; the explicit-contract escape hatch
+// (MNQM6 etc.) is only relevant to the live runner chart pipeline,
+// which has its own symbol resolution. Drop the explicit option here
+// so the picker can't bounce off "no shards for MNQM6 in <historical
+// date>". Lift to a coord endpoint if symbology grows.
+const SYMBOLS = ['MNQ'];
 
 const PERIODS = [
   { sec: 60,   label: 'M1' },
@@ -115,7 +117,16 @@ export function usePersistedRange(scope, fallback = DEFAULT_RANGE) {
   const [v, setV] = useState(() => {
     try {
       const raw = window.localStorage.getItem(LS_KEY(scope));
-      if (raw) return { ...fallback, ...JSON.parse(raw) };
+      if (raw) {
+        const merged = { ...fallback, ...JSON.parse(raw) };
+        // Normalize: any symbol the picker doesn't expose anymore
+        // (e.g. MNQM6 from a previous session that we've since
+        // dropped from the dropdown) snaps back to the fallback.
+        // Without this, the persisted MNQM6 value renders as a
+        // ghost selection that the dropdown can't unstick.
+        if (!SYMBOLS.includes(merged.symbol)) merged.symbol = fallback.symbol;
+        return merged;
+      }
     } catch {}
     return fallback;
   });
