@@ -18,7 +18,7 @@ import {
   cancelSweep, fetchResults, listSweeps, openSweepEvents, submitSweep,
 } from '../data/sweepClient';
 import DateRangePicker, { usePersistedRange } from '../components/chrome/DateRangePicker';
-import SessionChip, { usePersistedSession } from '../components/chrome/SessionChip';
+import SessionWindowsEditor, { DEFAULT_SESSIONS } from '../components/slot/SessionWindowsEditor';
 
 const STRATEGY = 'xovd_v1';
 // Hard cap that mirrors coord/sweep_recipe.py:HARD_CONFIG_CEILING. Submit
@@ -56,8 +56,14 @@ export default function LabSweeps() {
   const [range, setRange] = usePersistedRange('sweep');
   // Session config (mode/tz/windows). NOT swept -- single fixed value
   // applied to every config in the sweep run. Coord converts to
-  // --include / --exclude flags before spawning the kernel.
-  const [session, setSession] = usePersistedSession('sweep');
+  // --include / --exclude flags before spawning the kernel. Lives
+  // OUTSIDE the recipe object since the kernel reads it from CLI
+  // flags, not per-config JSON.
+  const [session, setSession] = useState({
+    mode:    'include',
+    tz:      'America/New_York',
+    windows: DEFAULT_SESSIONS,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -180,12 +186,28 @@ export default function LabSweeps() {
         submitError={submitError}
         drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen(v => !v)}
         range={range} setRange={setRange}
-        session={session} setSession={setSession}
       />
       <div className="flex-1 min-h-0 flex">
         {/* Recipe form (left) — width is user-draggable via Splitter */}
         <div style={{ width: formWidth }}
              className="shrink-0 min-h-0 overflow-y-auto bg-panel">
+          {/* Trading hours -- same SessionWindowsEditor SlotConfigDrawer
+              + LabPlayground use. Single fixed value (NOT a sweep
+              dimension); coord converts to --include / --exclude flags
+              before spawning the kernel. */}
+          <SchemaSection
+            id="sweep.session"
+            title="Trading hours"
+            defaultOpen={false}
+          >
+            <SessionWindowsEditor
+              mode={session.mode}
+              tz={session.tz}
+              windows={session.windows}
+              onChange={(m, t, w) => setSession({ mode: m, tz: t, windows: w })}
+              footnote="Single fixed value applied to all configs in the sweep run (session is NOT a sweep dimension). Submits as --include / --exclude flags to the kernel."
+            />
+          </SchemaSection>
           {CATEGORY_ORDER.filter(c => grouped[c]?.length).map(cat => (
             <CategoryBlock
               key={cat}
@@ -348,8 +370,7 @@ function flattenRows(section) {
 
 // ── Toolbar ─────────────────────────────────────────────────────────
 function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
-                   submitError, drawerOpen, onToggleDrawer, range, setRange,
-                   session, setSession }) {
+                   submitError, drawerOpen, onToggleDrawer, range, setRange }) {
   const tooBig = total > MAX_CONFIGS;
   const empty  = total < 1;
   const running = job && (job.meta?.state === 'starting' || job.meta?.state === 'running');
@@ -358,11 +379,6 @@ function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
       <span className="font-semibold text-sm">Sweep Definition</span>
       <span className="text-muted">strategy <code className="text-text">{STRATEGY}</code></span>
       <DateRangePicker value={range} onChange={setRange} />
-      <SessionChip
-        value={session}
-        onChange={setSession}
-        footnote="Single fixed value applied to all configs in the sweep run (session is NOT a sweep dimension)."
-      />
       {submitError && (
         <span className="text-short text-[11px] truncate max-w-[40%]" title={submitError}>
           {submitError}

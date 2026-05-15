@@ -15,7 +15,7 @@ import ChartPane from '../components/slot/ChartPane';
 import Splitter from '../components/chrome/Splitter';
 import { usePersistedSize } from '../components/chrome/usePersistedSize';
 import DateRangePicker, { usePersistedRange } from '../components/chrome/DateRangePicker';
-import SessionChip, { usePersistedSession } from '../components/chrome/SessionChip';
+import SessionWindowsEditor, { DEFAULT_SESSIONS } from '../components/slot/SessionWindowsEditor';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
@@ -46,11 +46,6 @@ export default function LabPlayground() {
   const [picker,  setPicker]  = usePersistedRange('playground');
   const [applied, setApplied] = useState(picker);
   const rangeDirty = JSON.stringify(picker) !== JSON.stringify(applied);
-  // Session config (mode/tz/windows). Same shape as live config; restart
-  // semantics like the date range -- changes flush via Apply, not per-RUN.
-  const [sessionPick,    setSessionPick]    = usePersistedSession('playground');
-  const [sessionApplied, setSessionApplied] = useState(sessionPick);
-  const sessionDirty = JSON.stringify(sessionPick) !== JSON.stringify(sessionApplied);
 
   // Fetch schema on mount.
   useEffect(() => {
@@ -63,11 +58,18 @@ export default function LabPlayground() {
         // JSON-keyed RUN means the wire format isn't capped at 12
         // positional fields; we now hold every sweepable param as a
         // {key: value} pair and send the whole dict on each RUN.
+        // Session params (sessionMode/Tz/Windows) ride in the same
+        // values dict despite being non-sweepable -- the playground
+        // sidebar renders Trading hours as its own section using the
+        // same SessionWindowsEditor SlotConfigDrawer uses for live.
         const sweepable = sweepableKeys(s);
         const fromAutosave = readAutosave();
         const defaults = Object.fromEntries(
           sweepable.map(k => [k, s.params[k]?.default ?? 0])
         );
+        defaults.sessionMode    = s.params.sessionMode?.default    ?? 'include';
+        defaults.sessionTz      = s.params.sessionTz?.default      ?? 'America/New_York';
+        defaults.sessionWindows = s.params.sessionWindows?.default ?? DEFAULT_SESSIONS;
         setValues(fromAutosave
           ? { ...defaults, ...fromAutosave }    // autosave overlays defaults
           : defaults);
@@ -87,25 +89,26 @@ export default function LabPlayground() {
         // applied-range changes mid-tab.
         await stop();
         if (cancelled) return;
+        // Session params live in the values dict (so they ride on
+        // each RUN automatically once the engine grows per-RUN
+        // session support, devstream ask). Also sent on start() so
+        // the engine has them at session-create time too.
+        const v = valuesRef.current || {};
         await start({
           symbol:     applied.symbol,
           frm:        applied.frm,
           to:         applied.to,
           period_sec: applied.period_sec,
-          // Session is sent shape-of-runner-config: coord forwards to
-          // the kernel (xovdV1Server doesn't honor it yet -- engine-
-          // claude ask is open). Once it does, flipping the picker +
-          // Restart applies cleanly.
-          sessionMode:    sessionApplied.mode,
-          sessionTz:      sessionApplied.tz,
-          sessionWindows: sessionApplied.windows,
+          sessionMode:    v.sessionMode,
+          sessionTz:      v.sessionTz,
+          sessionWindows: v.sessionWindows,
         });
       } catch (e) {
         console.error('playground start failed:', e);
       }
     })();
     return () => { cancelled = true; stop(); };
-  }, [applied, sessionApplied]);
+  }, [applied]);
 
   // Once the session is ready, fetch the dataset's bars for the chart.
   // Bars don't change between RUNs so this is a one-shot per session.
@@ -210,10 +213,6 @@ export default function LabPlayground() {
         setPicker={setPicker}
         rangeDirty={rangeDirty}
         onApplyRange={() => setApplied(picker)}
-        sessionPick={sessionPick}
-        setSessionPick={setSessionPick}
-        sessionDirty={sessionDirty}
-        onApplySession={() => setSessionApplied(sessionPick)}
       />
       <div className="flex-1 min-h-0 flex">
         <SliderPanel
@@ -276,8 +275,7 @@ export default function LabPlayground() {
 const STARTING_BAL = 50_000;
 
 // ── Toolbar (session status + manual Run + timing) ──
-function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rangeDirty, onApplyRange,
-                   sessionPick, setSessionPick, sessionDirty, onApplySession }) {
+function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rangeDirty, onApplyRange }) {
   const statusCls = wsStatus === 'ready'
     ? 'bg-long/20 text-long border-long/40'
     : wsStatus === 'connecting'
@@ -304,14 +302,6 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rang
         dirty={rangeDirty}
         onApply={onApplyRange}
         applyLabel="Restart"
-      />
-      <SessionChip
-        value={sessionPick}
-        onChange={setSessionPick}
-        dirty={sessionDirty}
-        onApply={onApplySession}
-        applyLabel="Restart"
-        footnote="Session change restarts the session (engine bakes mask at startup today)."
       />
       <span className="ml-auto flex items-center gap-2">
         {(runError || (wsStatus === 'error' && startErr)) && (
@@ -356,6 +346,26 @@ function SliderPanel({ schema, values, onChange, width, onLoadConfig, onReset })
           onReset={onReset}
         />
       </div>
+      {/* Trading hours -- same SessionWindowsEditor SlotConfigDrawer
+          uses for live config. Mirrors the live-config flow: edits
+          go straight into the values dict, sent on the next RUN. */}
+      <SchemaSection
+        id="playground.session"
+        title="Trading hours"
+        defaultOpen={false}
+      >
+        <SessionWindowsEditor
+          mode={values.sessionMode}
+          tz={values.sessionTz}
+          windows={values.sessionWindows}
+          onChange={(m, t, w) => {
+            onChange('sessionMode',    m);
+            onChange('sessionTz',      t);
+            onChange('sessionWindows', w);
+          }}
+          footnote="Engine bakes the session mask at startup today; session changes flow on the next RUN once xovdV1Server picks them up (engine-claude ask)."
+        />
+      </SchemaSection>
       {sections.map(s => (
         <SchemaSection
           key={s.id}
