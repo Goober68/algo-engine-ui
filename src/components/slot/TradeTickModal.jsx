@@ -62,7 +62,7 @@ function tickCacheSet(key, value) {
   }
 }
 
-export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision, audit, onClose, onPrev, onNext }) {
+export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision, audit, trailArm, onClose, onPrev, onNext }) {
   // `trade` = focal (= the one the user clicked). brokerTrade /
   // algoTrade may each be the same as focal, the sibling found by
   // side+qty pairing, or null (algo-only trade with no broker fill,
@@ -311,6 +311,8 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
               <KV k="TP"    v={fmtTicksAbs(bracketSrc?.tp_ticks, tpPx)}  cls="text-tp" />
               <KV k="SL"    v={fmtTicksAbs(bracketSrc?.sl_ticks, slPx)}  cls="text-sl" />
               <KV k="TT"    v={fmtTrailAbs(bracketSrc, tsPx)}            cls="text-trail" />
+              <KV k="armed" v={fmtArmAt(trailArm)}
+                  cls={trailArm ? 'text-trail' : 'text-muted'} />
             </div>
             <div className="space-y-1">
               <KV k="algo entry"   kw={92} v={fmtTimePx(algoTrade?.entry_ts, algoTrade?.entry_px)}
@@ -357,6 +359,7 @@ export default function TradeTickModal({ trade, brokerTrade, algoTrade, decision
           slPx={slPx}
           tpPx={tpPx}
           tsPx={tsPx}
+          trailArm={trailArm}
           fromNs={fromNs}
           toNs={toNs}
         />
@@ -471,6 +474,10 @@ function ChartLegendPanel() {
           <span className="text-muted ml-1">size = trade quantity</span>
         </LegendRow>
         <LegendRow>
+          <LegendDiamond color="#fb923c" />
+          <span>trail armed (post-hysteresis)</span>
+        </LegendRow>
+        <LegendRow>
           <span className="text-muted italic">prints hidden when window ≥ 30s</span>
         </LegendRow>
       </div>
@@ -480,6 +487,18 @@ function ChartLegendPanel() {
 
 function LegendRow({ children }) {
   return <div className="flex items-center gap-1.5">{children}</div>;
+}
+
+function LegendDiamond({ color }) {
+  return (
+    <span
+      className="inline-block"
+      style={{
+        width: 8, height: 8, backgroundColor: color,
+        transform: 'rotate(45deg)', borderRadius: 1,
+      }}
+    />
+  );
 }
 
 function LegendSwatch({ color, line, small, big }) {
@@ -500,7 +519,7 @@ function LegendSwatch({ color, line, small, big }) {
   );
 }
 
-function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs }) {
+function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, trailArm, fromNs, toNs }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   // Zoom/pan window. Defaults to the full [fromNs, toNs] passed in;
@@ -543,12 +562,12 @@ function TickChart({ ticks, err, source, brokerTrade, algoTrade, entryPx, side, 
     const wrap = wrapRef.current;
     const cv = canvasRef.current;
     if (!wrap || !cv) return;
-    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, view.from, view.to);
+    const draw = () => drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, trailArm, view.from, view.to);
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, view]);
+  }, [ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, trailArm, view]);
 
   const onWheel = (e) => {
     e.preventDefault();
@@ -682,7 +701,7 @@ function fmtSpan(ns) {
   return `${(sec / 3600).toFixed(1)}h`;
 }
 
-function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, fromNs, toNs) {
+function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, slPx, tpPx, tsPx, trailArm, fromNs, toNs) {
   const dpr = window.devicePixelRatio || 1;
   const cssW = wrap.clientWidth;
   const cssH = wrap.clientHeight;
@@ -914,6 +933,32 @@ function drawTickChart(cv, wrap, ticks, brokerTrade, algoTrade, entryPx, side, s
     const yy = yP(algoTrade.exit_px);
     drawArrow(ctx, xx, yy, (algoTrade.pnl ?? 0) > 0 ? '#7fff00' : '#ef5350', 'left', /*hollow*/ true);
   }
+  // Trail-arm diamond at the exact (ts, trigger_px) the engine armed
+  // on. Sits on top of all other markers since it is the moment of
+  // interest -- "this is where the trailing SL came alive". Skip
+  // silently when the arm fired outside the visible window or its
+  // price is off-band.
+  if (trailArm && trailArm.ts_ns >= fromNs && trailArm.ts_ns <= toNs
+      && inBand(trailArm.trigger_px)) {
+    const ax = xT(trailArm.ts_ns);
+    const ay = yP(trailArm.trigger_px);
+    drawArmDiamond(ctx, ax, ay, '#fb923c');
+  }
+}
+
+function drawArmDiamond(ctx, cx, cy, fill) {
+  const r = 6;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy);
+  ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
 }
 
 // Dotted horizontal line at price `p` spanning the chart width with
@@ -1035,6 +1080,20 @@ function fmtTrailAbs(decision, armPx) {
   if (trig == null || dist == null) return '—';
   if (armPx == null) return `${trig}t / ${dist}t`;
   return `${trig}t / ${dist}t - ${armPx.toFixed(2)}`;
+}
+
+// Trail-arm summary cell. Engine writes one trail_arm event per fill
+// that crosses the post-hysteresis trigger; ts_ns + trigger_px = the
+// underlying's price at the moment the trail came alive (NOT the
+// algo's threshold). Returns em-dash when no arm has fired for this
+// trade -- either the trade exited before the trigger was satisfied,
+// or the deployed runner doesn't emit trail_arm yet.
+function fmtArmAt(arm) {
+  if (!arm) return '—';
+  const t = new Date(arm.ts_ns / 1e6).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+  return `${t} @ ${arm.trigger_px.toFixed(2)}`;
 }
 
 function fmtFullTime(ns) {

@@ -865,7 +865,42 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
       }
     }
   }
+  // Trail-arm layer -- one small orange diamond per arm. Marker is at
+  // (arm.ts_ns, arm.trigger_px) -- the actual post-hysteresis arm
+  // location, NOT the algo's trigger threshold (which is the dotted
+  // orange TT line on the tick modal). Diamond visually distinct from
+  // entry/exit triangles so the eye reads "this is when trail armed,
+  // not when you entered/exited".
+  const arms = data.trail_arms || [];
+  const inRangeArms = bars.length
+    ? arms.filter(a => a.ts_ns >= bars[0].ts_ns
+                    && a.ts_ns < bars[bars.length - 1].ts_ns + tf * 1e9)
+    : arms;
+  for (const a of inRangeArms) {
+    const x = subBarX(a.ts_ns);
+    const y = candles.priceToCoordinate(a.trigger_px);
+    if (x != null && y != null) {
+      drawDiamond(ctx, x, y, '#fb923c');   // text-trail orange
+    }
+  }
   return { drawn, total: inRange.length * 2, outOfRange };
+}
+
+// Small filled diamond for trail-arm markers. ~6px tip-to-tip; subtle
+// dark outline so it stays legible over candle bodies of any color.
+function drawDiamond(ctx, cx, cy, fill) {
+  const r = 4;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy);
+  ctx.lineTo(cx, cy + r);
+  ctx.lineTo(cx - r, cy);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
 }
 
 // Per-bar entry-limit trail. Direction-coded (cyan long, yellow short)

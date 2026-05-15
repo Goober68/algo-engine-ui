@@ -123,12 +123,19 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
   const TF = 180;
   let decision = null;
   let audit = null;
+  let trailArm = null;
   if (!focal.ad_hoc) {
     const entrySec = Math.floor(focal.entry_ts / 1e9);
     const barSec   = Math.floor(entrySec / TF) * TF;
     decision = data.decisions?.find(d =>
       Math.floor(d.ts_ns / 1e9 / TF) * TF === barSec);
     audit = findAuditForTrade(data.audit || [], focal);
+    // Trail arm: match by (order_id when available, else by side+qty
+    // within the trade's [entry_ts, exit_ts] window). Engine emits
+    // one arm per fill that crosses the hysteresis threshold; if the
+    // trade exited before arming, this is null.
+    trailArm = findTrailArmForTrade(data.trail_arms || [], focal,
+                                    audit, brokerTrade, algoTrade);
   }
 
   // Prev/next nav walks ALGO order bars only (data.trades sorted by
@@ -146,6 +153,7 @@ function TickModalWrapper({ data, modalTradeKey, onClose, onJump }) {
       algoTrade={algoTrade}
       decision={decision}
       audit={audit}
+      trailArm={trailArm}
       onClose={onClose}
       onPrev={prev ? () => onJump(prev.entry_ts) : null}
       onNext={next ? () => onJump(next.entry_ts) : null}
@@ -190,4 +198,34 @@ function findAuditForTrade(audits, trade) {
     }
   }
   return best;
+}
+
+// Walk trail-arm events and find the one that armed for this trade.
+// Engine stamps each arm with order_id (= the broker's order id from
+// the algo's POST). When that's available on the broker fill it's a
+// clean exact match; otherwise fall back to "arm fired between
+// entry_ts and exit_ts, side matches via signed qty (long=+,short=-),
+// |qty| matches". Returns the arm event or null (= trade exited
+// before the trail armed).
+function findTrailArmForTrade(arms, trade, audit, brokerTrade, algoTrade) {
+  if (!arms || !arms.length || !trade.entry_ts) return null;
+  const exitTs = trade.exit_ts || (trade.entry_ts + 24 * 60 * 60 * 1e9);
+  // First try order_id match. Broker fills may carry an order_id;
+  // audit POST request body may carry algo_signal_id we don't track.
+  const oid = brokerTrade?.order_id ?? algoTrade?.order_id;
+  if (oid != null) {
+    const exact = arms.find(a => a.order_id === oid);
+    if (exact) return exact;
+  }
+  // Fall back to time + side + qty match within the trade's window.
+  const wantQty = trade.qty;
+  const wantLong = trade.side === 'long';
+  for (const a of arms) {
+    if (a.ts_ns < trade.entry_ts || a.ts_ns > exitTs) continue;
+    const armIsLong = (a.qty || 0) > 0;
+    if (armIsLong !== wantLong) continue;
+    if (Math.abs(a.qty) !== Math.abs(wantQty)) continue;
+    return a;
+  }
+  return null;
 }

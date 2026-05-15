@@ -129,7 +129,7 @@ export function useSlotData(runnerId, slotIdx) {
     setData(null);   // reset on slot/runner change
     // Bust cache so route changes get fresh data when revisiting a slot
     // that was streaming live updates.
-    [`bars.jsonl`, `trades.jsonl`, `broker_truth.jsonl`, `decisions.jsonl`, `audit.jsonl`].forEach(f => {
+    [`bars.jsonl`, `trades.jsonl`, `broker_truth.jsonl`, `decisions.jsonl`, `audit.jsonl`, `trail_arms.jsonl`].forEach(f => {
       cache.delete(slotFileUrl(runnerId, slotIdx, f));
     });
     Promise.all([
@@ -137,10 +137,12 @@ export function useSlotData(runnerId, slotIdx) {
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'broker_truth.jsonl')),
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'decisions.jsonl')),
       loadJsonl(slotFileUrl(runnerId, slotIdx, 'audit.jsonl'))
-        .catch(() => []),    // mock fixtures may not have audit
-    ]).then(([trades, broker, decisions, audit]) => {
+        .catch(() => []),         // mock fixtures may not have audit
+      loadJsonl(slotFileUrl(runnerId, slotIdx, 'trail_arms.jsonl'))
+        .catch(() => []),         // engine emission still rolling out
+    ]).then(([trades, broker, decisions, audit, trail_arms]) => {
       if (cancelled) return;
-      setData({ bars: [], trades, broker, decisions, audit });
+      setData({ bars: [], trades, broker, decisions, audit, trail_arms });
     }).catch(console.error);
     // Slow loner: bars. Merge in when ready; the chart renders empty
     // until then. If bars finish FIRST (e.g. cache hit) and the
@@ -151,7 +153,7 @@ export function useSlotData(runnerId, slotIdx) {
         if (cancelled) return;
         setData(prev => prev
           ? { ...prev, bars }
-          : { bars, trades: [], broker: [], decisions: [], audit: [] });
+          : { bars, trades: [], broker: [], decisions: [], audit: [], trail_arms: [] });
       }).catch(console.error);
     return () => { cancelled = true; };
   }, [runnerId, slotIdx]);
