@@ -15,6 +15,7 @@ import ChartPane from '../components/slot/ChartPane';
 import Splitter from '../components/chrome/Splitter';
 import { usePersistedSize } from '../components/chrome/usePersistedSize';
 import DateRangePicker, { usePersistedRange } from '../components/chrome/DateRangePicker';
+import SessionChip, { usePersistedSession } from '../components/chrome/SessionChip';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
@@ -45,6 +46,11 @@ export default function LabPlayground() {
   const [picker,  setPicker]  = usePersistedRange('playground');
   const [applied, setApplied] = useState(picker);
   const rangeDirty = JSON.stringify(picker) !== JSON.stringify(applied);
+  // Session config (mode/tz/windows). Same shape as live config; restart
+  // semantics like the date range -- changes flush via Apply, not per-RUN.
+  const [sessionPick,    setSessionPick]    = usePersistedSession('playground');
+  const [sessionApplied, setSessionApplied] = useState(sessionPick);
+  const sessionDirty = JSON.stringify(sessionPick) !== JSON.stringify(sessionApplied);
 
   // Fetch schema on mount.
   useEffect(() => {
@@ -86,13 +92,20 @@ export default function LabPlayground() {
           frm:        applied.frm,
           to:         applied.to,
           period_sec: applied.period_sec,
+          // Session is sent shape-of-runner-config: coord forwards to
+          // the kernel (xovdV1Server doesn't honor it yet -- engine-
+          // claude ask is open). Once it does, flipping the picker +
+          // Restart applies cleanly.
+          sessionMode:    sessionApplied.mode,
+          sessionTz:      sessionApplied.tz,
+          sessionWindows: sessionApplied.windows,
         });
       } catch (e) {
         console.error('playground start failed:', e);
       }
     })();
     return () => { cancelled = true; stop(); };
-  }, [applied]);
+  }, [applied, sessionApplied]);
 
   // Once the session is ready, fetch the dataset's bars for the chart.
   // Bars don't change between RUNs so this is a one-shot per session.
@@ -197,6 +210,10 @@ export default function LabPlayground() {
         setPicker={setPicker}
         rangeDirty={rangeDirty}
         onApplyRange={() => setApplied(picker)}
+        sessionPick={sessionPick}
+        setSessionPick={setSessionPick}
+        sessionDirty={sessionDirty}
+        onApplySession={() => setSessionApplied(sessionPick)}
       />
       <div className="flex-1 min-h-0 flex">
         <SliderPanel
@@ -259,7 +276,8 @@ export default function LabPlayground() {
 const STARTING_BAL = 50_000;
 
 // ── Toolbar (session status + manual Run + timing) ──
-function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rangeDirty, onApplyRange }) {
+function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rangeDirty, onApplyRange,
+                   sessionPick, setSessionPick, sessionDirty, onApplySession }) {
   const statusCls = wsStatus === 'ready'
     ? 'bg-long/20 text-long border-long/40'
     : wsStatus === 'connecting'
@@ -286,6 +304,14 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rang
         dirty={rangeDirty}
         onApply={onApplyRange}
         applyLabel="Restart"
+      />
+      <SessionChip
+        value={sessionPick}
+        onChange={setSessionPick}
+        dirty={sessionDirty}
+        onApply={onApplySession}
+        applyLabel="Restart"
+        footnote="Session change restarts the session (engine bakes mask at startup today)."
       />
       <span className="ml-auto flex items-center gap-2">
         {(runError || (wsStatus === 'error' && startErr)) && (

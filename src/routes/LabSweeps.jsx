@@ -18,6 +18,7 @@ import {
   cancelSweep, fetchResults, listSweeps, openSweepEvents, submitSweep,
 } from '../data/sweepClient';
 import DateRangePicker, { usePersistedRange } from '../components/chrome/DateRangePicker';
+import SessionChip, { usePersistedSession } from '../components/chrome/SessionChip';
 
 const STRATEGY = 'xovd_v1';
 // Hard cap that mirrors coord/sweep_recipe.py:HARD_CONFIG_CEILING. Submit
@@ -53,6 +54,10 @@ export default function LabSweeps() {
   // Date range used as the dataset recipe -- coord stitches on submit.
   // No "Apply" button: range submits with the next sweep launch.
   const [range, setRange] = usePersistedRange('sweep');
+  // Session config (mode/tz/windows). NOT swept -- single fixed value
+  // applied to every config in the sweep run. Coord converts to
+  // --include / --exclude flags before spawning the kernel.
+  const [session, setSession] = usePersistedSession('sweep');
 
   useEffect(() => {
     let cancelled = false;
@@ -119,6 +124,11 @@ export default function LabSweeps() {
       payload.frm        = range.frm;
       payload.to         = range.to;
       payload.period_sec = range.period_sec;
+      // Session config -- single fixed value (NOT a sweep dim). Coord
+      // converts mode + windows to --include / --exclude CLI flags.
+      payload.sessionMode    = session.mode;
+      payload.sessionTz      = session.tz;
+      payload.sessionWindows = session.windows;
       const resp = await submitSweep(payload);
       const initial = {
         sweep_id: resp.sweep_id,
@@ -170,6 +180,7 @@ export default function LabSweeps() {
         submitError={submitError}
         drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen(v => !v)}
         range={range} setRange={setRange}
+        session={session} setSession={setSession}
       />
       <div className="flex-1 min-h-0 flex">
         {/* Recipe form (left) — width is user-draggable via Splitter */}
@@ -337,7 +348,8 @@ function flattenRows(section) {
 
 // ── Toolbar ─────────────────────────────────────────────────────────
 function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
-                   submitError, drawerOpen, onToggleDrawer, range, setRange }) {
+                   submitError, drawerOpen, onToggleDrawer, range, setRange,
+                   session, setSession }) {
   const tooBig = total > MAX_CONFIGS;
   const empty  = total < 1;
   const running = job && (job.meta?.state === 'starting' || job.meta?.state === 'running');
@@ -346,6 +358,11 @@ function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
       <span className="font-semibold text-sm">Sweep Definition</span>
       <span className="text-muted">strategy <code className="text-text">{STRATEGY}</code></span>
       <DateRangePicker value={range} onChange={setRange} />
+      <SessionChip
+        value={session}
+        onChange={setSession}
+        footnote="Single fixed value applied to all configs in the sweep run (session is NOT a sweep dimension)."
+      />
       {submitError && (
         <span className="text-short text-[11px] truncate max-w-[40%]" title={submitError}>
           {submitError}
