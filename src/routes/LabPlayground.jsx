@@ -233,7 +233,9 @@ export default function LabPlayground() {
                               setSelectedTradeKey={setSelectedTradeKey}
                               runInFlight={runInFlight}
                               runError={runError}
-                              onClearError={() => setRunError(null)} />
+                              onClearError={() => setRunError(null)}
+                              wsStatus={wsStatus}
+                              applied={applied} />
           </div>
           <div className="min-h-0 border-t border-border" style={{ flex: '0 0 30%' }}>
             <EquityCurve stats={tradeStats} trades={trades}
@@ -486,7 +488,7 @@ function fmtPct(v, withSign) {
 // Adapts the playground's bars+trades into the slot/ChartPane data
 // shape. Bars don't change between RUNs, so the chart stays mounted
 // and only the broker (trade markers) layer redraws on each RUN.
-function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey, runInFlight, runError, onClearError }) {
+function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey, setSelectedTradeKey, runInFlight, runError, onClearError, wsStatus, applied }) {
   const data = useMemo(() => {
     if (!bars) return null;
     // Overlay each RUN's MAs from decisions[].xovd onto the static
@@ -524,11 +526,7 @@ function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey
   }, [bars, trades, decisions]);
 
   if (!bars) {
-    return (
-      <div className="h-full flex items-center justify-center text-[11px] text-muted">
-        loading bars…
-      </div>
-    );
+    return <BuildingChartPlaceholder wsStatus={wsStatus} applied={applied} />;
   }
   return (
     <div className="relative h-full">
@@ -579,6 +577,57 @@ function ChartPaneAdapter({ bars, trades, decisions, tf, setTf, selectedTradeKey
 
 // xovdV1Server trade -> ChartPane's broker-shape. Field names follow
 // HistoricalDataProvider.vizTradesToBroker so future merges stay
+// Chart-area placeholder while a session is building (stitcher
+// resolves shards -> {tick,bar}.bin -> engine subprocess spawns ->
+// engine signals ready). Replaces the static "loading bars..." text
+// with an active spinner + elapsed counter + range readout so 5-15s
+// of building reads as "something's happening" rather than "stuck".
+// Resets the elapsed clock on each new session attempt (keyed by
+// the applied range JSON) so the counter doesn't carry stale time
+// across restarts.
+function BuildingChartPlaceholder({ wsStatus, applied }) {
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const rangeKey = applied ? JSON.stringify(applied) : '';
+  useEffect(() => {
+    setElapsedMs(0);
+    const t0 = performance.now();
+    const id = setInterval(() => setElapsedMs(performance.now() - t0), 100);
+    return () => clearInterval(id);
+  }, [rangeKey]);
+
+  const isBuild  = wsStatus === 'connecting';
+  const isError  = wsStatus === 'error';
+  const label    = isError ? 'session failed'
+                 : isBuild ? 'building'
+                           : 'waiting';
+  const subLabel = applied
+    ? `${applied.symbol} · ${applied.frm} → ${applied.to} · M${Math.round(applied.period_sec/60)}`
+    : '';
+  return (
+    <div className="h-full flex items-center justify-center bg-bg">
+      <div className="flex flex-col items-center gap-3 text-muted">
+        {!isError && (
+          <span className="inline-block w-10 h-10 rounded-full
+                            border-2 border-accent/20 border-t-accent
+                            animate-spin" />
+        )}
+        <div className="flex flex-col items-center gap-0.5">
+          <span className={'text-sm font-semibold ' +
+            (isError ? 'text-short' : 'text-text')}>{label}</span>
+          {subLabel && (
+            <span className="text-[11px] tnum">{subLabel}</span>
+          )}
+          {!isError && (
+            <span className="text-[10px] tnum opacity-70">
+              {(elapsedMs / 1000).toFixed(1)}s
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // compatible if the legacy and live shapes converge.
 function tradesToBroker(trades) {
   const DIR_TO_SIDE = { LONG: 'long', SHORT: 'short', L: 'long', S: 'short' };
