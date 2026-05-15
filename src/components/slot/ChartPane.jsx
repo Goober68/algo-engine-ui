@@ -748,6 +748,18 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
+  // Clip to the plot area so trade triangles, arm diamonds, session
+  // shading, and limit-trail lines don't bleed into lightweight-charts'
+  // own price-scale (right gutter, ~60-80px wide) or time-scale
+  // (bottom gutter, ~24-30px tall). Without this, markers near the
+  // right edge of the visible bars overdraw the price labels and
+  // become unreadable.
+  const rightAxisW  = chart.priceScale('right').width()  || 0;
+  const bottomAxisH = chart.timeScale().height()         || 0;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, cssW - rightAxisW, cssH - bottomAxisH);
+  ctx.clip();
   const ts = chart.timeScale();
   const snap = (t) => Math.floor(t / tf) * tf;
   // Inactive-session shading goes UNDER everything else (drawn first
@@ -883,6 +895,7 @@ function drawOverlay(chart, candles, canvas, wrap, data, tf, selectedTradeKey) {
       drawDiamond(ctx, x, y, '#fb923c');   // text-trail orange
     }
   }
+  ctx.restore();   // matches the plot-area clip set at function top
   return { drawn, total: inRange.length * 2, outOfRange };
 }
 
