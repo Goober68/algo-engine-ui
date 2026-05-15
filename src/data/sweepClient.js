@@ -32,17 +32,17 @@ const coordBase = () => activeCoordFor('sweep')?.url || '';
 export function getDefaults() { return DEFAULTS; }
 
 // Submit a recipe. `recipePayload` is the toSubmitPayload() output:
-// {strategy, recipe: {<key>: {fixed | sweep}, ...}}. `overrides` may
-// supply binary/bars/ticks/indicators/no_session/no_slow_path/excludes
-// to override the env defaults.
+// {strategy, recipe, symbol, frm, to, period_sec}. `overrides` may
+// supply binary/indicators/no_session/no_slow_path/excludes to override
+// the env defaults. Date-range submission: payload's symbol+frm+to+
+// period_sec are the dataset recipe -- coord stitches the bins via
+// resolve_dataset_paths -> stitcher.stitch on each submit.
 export async function submitSweep(recipePayload, overrides = {}) {
   const body = { ...(DEFAULTS || {}), ...overrides, ...recipePayload };
-  // `binary`     resolves coord-side via [target.<name>.binaries].
-  // `bars/ticks` resolve coord-side from the active data window
-  //              (Timeframe chip) when not in body -- so the UI
-  //              doesn't pre-check them. Coord 400s with a clear
-  //              message if no active window is set and the body
-  //              omits paths.
+  // `binary` resolves coord-side via [target.<name>.binaries].
+  // Dataset comes from the recipe (symbol/frm/to/period_sec); coord
+  // also accepts explicit bars/ticks paths or a dataset_base prefix
+  // for one-cycle backcompat.
   const required = ['strategy', 'recipe'];
   const missing = required.filter(k => !body[k]);
   if (missing.length) {

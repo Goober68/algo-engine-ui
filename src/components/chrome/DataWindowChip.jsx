@@ -22,7 +22,13 @@ import {
   openBuildEvents, preflightDataWindow, setActiveDataWindow,
 } from '../../data/dataWindowsClient';
 
-const SYMBOLS = ['MNQ.c.0'];     // expand when ES.c.0 / NQ.c.0 / etc. land
+// What's actually in the local DBN archive today (per-day mbp1
+// captures of the front-month contract). MNQ.c.0 / ES.c.0 etc. are
+// a different subscription/schema (continuous-front-month) -- when
+// those land in their own archive they get their own picker entries.
+// Future: drive this list from a coord endpoint (`GET /api/data-
+// windows/symbols`) that scans the archive's symbology union.
+const SYMBOLS = ['MNQM6', 'NQM6', 'MESM6', 'ESM6'];
 
 export default function DataWindowChip() {
   const [snapshot, setSnapshot]   = useState(null);  // {windows, active_id, building}

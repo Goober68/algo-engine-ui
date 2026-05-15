@@ -17,6 +17,7 @@ import {
 import {
   cancelSweep, fetchResults, listSweeps, openSweepEvents, submitSweep,
 } from '../data/sweepClient';
+import DateRangePicker, { usePersistedRange } from '../components/chrome/DateRangePicker';
 
 const STRATEGY = 'xovd_v1';
 // Hard cap that mirrors coord/sweep_recipe.py:HARD_CONFIG_CEILING. Submit
@@ -49,6 +50,9 @@ export default function LabSweeps() {
     return Number.isFinite(v) && v >= 320 ? v : 640;
   });
   const esRef = useRef(null);
+  // Date range used as the dataset recipe -- coord stitches on submit.
+  // No "Apply" button: range submits with the next sweep launch.
+  const [range, setRange] = usePersistedRange('sweep');
 
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +112,13 @@ export default function LabSweeps() {
     setSubmitting(true);
     try {
       const payload = toSubmitPayload(STRATEGY, schema, recipe);
+      // Append the date range -- coord's resolve_dataset_paths()
+      // calls stitcher.stitch() to materialize bins on demand from
+      // these.
+      payload.symbol     = range.symbol;
+      payload.frm        = range.frm;
+      payload.to         = range.to;
+      payload.period_sec = range.period_sec;
       const resp = await submitSweep(payload);
       const initial = {
         sweep_id: resp.sweep_id,
@@ -158,6 +169,7 @@ export default function LabSweeps() {
         onSubmit={onSubmit} onCancel={onCancel}
         submitError={submitError}
         drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen(v => !v)}
+        range={range} setRange={setRange}
       />
       <div className="flex-1 min-h-0 flex">
         {/* Recipe form (left) — width is user-draggable via Splitter */}
@@ -325,7 +337,7 @@ function flattenRows(section) {
 
 // ── Toolbar ─────────────────────────────────────────────────────────
 function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
-                   submitError, drawerOpen, onToggleDrawer }) {
+                   submitError, drawerOpen, onToggleDrawer, range, setRange }) {
   const tooBig = total > MAX_CONFIGS;
   const empty  = total < 1;
   const running = job && (job.meta?.state === 'starting' || job.meta?.state === 'running');
@@ -333,6 +345,7 @@ function Toolbar({ schema, recipe, total, job, submitting, onSubmit, onCancel,
     <div className="bg-panel border-b border-border px-3 py-1 flex items-center gap-3 text-xs">
       <span className="font-semibold text-sm">Sweep Definition</span>
       <span className="text-muted">strategy <code className="text-text">{STRATEGY}</code></span>
+      <DateRangePicker value={range} onChange={setRange} />
       {submitError && (
         <span className="text-short text-[11px] truncate max-w-[40%]" title={submitError}>
           {submitError}

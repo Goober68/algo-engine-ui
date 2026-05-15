@@ -14,6 +14,7 @@ import { paramActive } from '../components/schema/schemaLabels';
 import ChartPane from '../components/slot/ChartPane';
 import Splitter from '../components/chrome/Splitter';
 import { usePersistedSize } from '../components/chrome/usePersistedSize';
+import DateRangePicker, { usePersistedRange } from '../components/chrome/DateRangePicker';
 
 const STRATEGY = 'xovd_v1';
 const RUN_DEBOUNCE_MS = 120;
@@ -38,6 +39,12 @@ export default function LabPlayground() {
   const [tf, setTf]               = useState(180);     // M3 default
   const wsStatus = useWsStatus();
   const debounceRef = useRef(null);
+  // Date-range state. `picker` mirrors the picker control; `applied`
+  // is the range the current session was started against. dirty =
+  // picker has unflushed edits -> Apply button restarts the session.
+  const [picker,  setPicker]  = usePersistedRange('playground');
+  const [applied, setApplied] = useState(picker);
+  const rangeDirty = JSON.stringify(picker) !== JSON.stringify(applied);
 
   // Fetch schema on mount.
   useEffect(() => {
@@ -63,15 +70,29 @@ export default function LabPlayground() {
     return () => { cancelled = true; };
   }, []);
 
-  // Spawn a coord-mediated session on mount. If VITE_PLAYGROUND_DEFAULTS
-  // is set the session starts with no further interaction; otherwise the
-  // user has to wire up paths (Settings drawer is v2).
+  // Spawn a coord-mediated session against the applied date range.
+  // Restarts whenever `applied` changes (Apply button).
   useEffect(() => {
-    if (getDefaults()) {
-      start().catch(e => console.error('playground start failed:', e));
-    }
-    return () => { stop(); };
-  }, []);
+    if (!getDefaults()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // stop() is no-op if no session; ensures clean restart on
+        // applied-range changes mid-tab.
+        await stop();
+        if (cancelled) return;
+        await start({
+          symbol:     applied.symbol,
+          frm:        applied.frm,
+          to:         applied.to,
+          period_sec: applied.period_sec,
+        });
+      } catch (e) {
+        console.error('playground start failed:', e);
+      }
+    })();
+    return () => { cancelled = true; stop(); };
+  }, [applied]);
 
   // Once the session is ready, fetch the dataset's bars for the chart.
   // Bars don't change between RUNs so this is a one-shot per session.
@@ -167,7 +188,16 @@ export default function LabPlayground() {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
-      <Toolbar wsStatus={wsStatus} runWallMs={runWallMs} runError={runError} onRun={triggerRun} />
+      <Toolbar
+        wsStatus={wsStatus}
+        runWallMs={runWallMs}
+        runError={runError}
+        onRun={triggerRun}
+        picker={picker}
+        setPicker={setPicker}
+        rangeDirty={rangeDirty}
+        onApplyRange={() => setApplied(picker)}
+      />
       <div className="flex-1 min-h-0 flex">
         <SliderPanel
           schema={schema}
@@ -227,7 +257,7 @@ export default function LabPlayground() {
 const STARTING_BAL = 50_000;
 
 // ── Toolbar (session status + manual Run + timing) ──
-function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
+function Toolbar({ wsStatus, runWallMs, runError, onRun, picker, setPicker, rangeDirty, onApplyRange }) {
   const statusCls = wsStatus === 'ready'
     ? 'bg-long/20 text-long border-long/40'
     : wsStatus === 'connecting'
@@ -246,6 +276,13 @@ function Toolbar({ wsStatus, runWallMs, runError, onRun }) {
           {sess.runs_count} runs
         </span>
       )}
+      <DateRangePicker
+        value={picker}
+        onChange={setPicker}
+        dirty={rangeDirty}
+        onApply={onApplyRange}
+        applyLabel="Restart"
+      />
       <span className="ml-auto flex items-center gap-2">
         {(runError || (wsStatus === 'error' && startErr)) && (
           <span className="text-short text-[11px]" title={runError || startErr}>

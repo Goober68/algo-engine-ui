@@ -43,14 +43,17 @@ export function getSession() { return session; }
 export function getLastError() { return lastError; }
 
 // Spawn a session on the active coord. `overrides` may carry any of
-// {binary,dataset_base,indicators,set_path,symbol,tick_size,tick_value,m2atrs}
-// to replace the defaults.
+// {binary,dataset_base,indicators,set_path,symbol,tick_size,tick_value,
+//  m2atrs, frm, to, period_sec} to replace the defaults.
+//
+// New (date-range) shape: pass {symbol, frm, to, period_sec} and coord
+// stitches the bins on demand from per-day shards (cache-hit returns
+// instantly; miss takes ~24s for 4yr at 33M rec/s, less for shorter
+// ranges). Old (dataset_base) shape still accepted for one cycle.
 export async function start(overrides = {}) {
   const body = { ...(DEFAULTS || {}), ...overrides };
   // `binary` resolves coord-side via [target.<name>.binaries].
-  // `dataset_base` resolves coord-side from the active data window
-  // (Timeframe chip) when not in body -- so the UI doesn't pre-check
-  // it. `set_path` is the only field that still has to ride along
+  // `set_path` is the only field that still has to ride along
   // (per-account, no coord-side registry yet).
   // `indicators` was required pre-engine-claude#8ca6a69 (engine
   // default is now STREAMING -- precomputed AEIB is opt-in).
