@@ -31,6 +31,10 @@ function isoDaysAgo(n) {
   return d.toISOString().slice(0, 10);
 }
 
+function isoToday() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export const DEFAULT_RANGE = {
   symbol:     'MNQ',                // continuous front-month (4yr history)
   frm:        isoDaysAgo(30),
@@ -42,6 +46,11 @@ export const DEFAULT_RANGE = {
 // merged next value. `dirty` shows the apply button + dim warning when
 // the parent's "applied" range hasn't caught up yet.
 export default function DateRangePicker({ value, onChange, dirty, onApply, applyLabel = 'Apply' }) {
+  // No data exists past today (the daily extractor pulls UTC-day-prior
+  // shards), so cap both inputs at today. Also cross-clamp: from <= to,
+  // to >= from -- prevents dragging into an inverted range that the
+  // stitcher would just 400 on.
+  const today = isoToday();
   return (
     <div className="flex items-center gap-1.5 text-[11px] tnum">
       <span className="text-muted text-[10px] uppercase tracking-wide">data</span>
@@ -55,6 +64,7 @@ export default function DateRangePicker({ value, onChange, dirty, onApply, apply
       <input
         type="date"
         value={value.frm}
+        max={value.to || today}
         onChange={e => onChange({ ...value, frm: e.target.value })}
         className="bg-bg border border-border rounded px-1 py-0.5 text-text"
       />
@@ -62,6 +72,8 @@ export default function DateRangePicker({ value, onChange, dirty, onApply, apply
       <input
         type="date"
         value={value.to}
+        min={value.frm || undefined}
+        max={today}
         onChange={e => onChange({ ...value, to: e.target.value })}
         className="bg-bg border border-border rounded px-1 py-0.5 text-text"
       />
