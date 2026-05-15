@@ -92,7 +92,12 @@ export default function DateRangePicker({ value, onChange, dirty, onApply, apply
 // Persist the picker's state across page reloads. localStorage-backed,
 // scoped by feature key ('playground' / 'sweep') so the two tabs can
 // keep independent ranges.
-const LS_KEY = (scope) => `algoengine.dateRange.v1.${scope}`;
+//
+// v2 = symbol default flipped from MNQM6 (recent-days-only contract)
+// to MNQ (continuous front-month, 4yr history). Pre-v2 saves get
+// silently discarded so users don't bounce off a "no shards found
+// for MNQM6 in <historical date>" error after the upgrade.
+const LS_KEY = (scope) => `algoengine.dateRange.v2.${scope}`;
 
 export function usePersistedRange(scope, fallback = DEFAULT_RANGE) {
   const [v, setV] = useState(() => {
