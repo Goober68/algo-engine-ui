@@ -11,11 +11,11 @@
 
 import { useEffect, useState } from 'react';
 
-// What the on-disk shards are tagged with. Coord knows the MT5
-// translation table (MNQ1! -> MNQM6 etc.) but the picker speaks
-// the contract codes directly so the user can see what the stitcher
-// actually reads. Lift to a coord endpoint if symbology grows.
-const SYMBOLS = ['MNQM6'];
+// Picker symbols. Coord routes these to the right shard family:
+//   "MNQ"   -> continuous-front-month (MNQ.c.0), 4yr+ history
+//   "MNQM6" -> explicit June 2026 contract, recent days only
+// Lift to a coord endpoint if symbology grows.
+const SYMBOLS = ['MNQ', 'MNQM6'];
 
 const PERIODS = [
   { sec: 60,   label: 'M1' },
@@ -32,7 +32,7 @@ function isoDaysAgo(n) {
 }
 
 export const DEFAULT_RANGE = {
-  symbol:     'MNQM6',
+  symbol:     'MNQ',                // continuous front-month (4yr history)
   frm:        isoDaysAgo(30),
   to:         isoDaysAgo(1),
   period_sec: 180,
