@@ -38,19 +38,47 @@ async function loadJson(path) {
   return obj;
 }
 
-async function loadJsonl(path) {
-  if (cache.has(path)) return cache.get(path);
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`fetch ${path} ${res.status}`);
-  const text = await res.text();
+function parseNdjson(text) {
   const out = [];
   for (const line of text.split('\n')) {
     const s = line.trim();
     if (!s) continue;
     try { out.push(JSON.parse(s)); } catch { /* skip */ }
   }
+  return out;
+}
+
+async function loadJsonl(path, force = false) {
+  if (!force && cache.has(path)) return cache.get(path);
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`fetch ${path} ${res.status}`);
+  const out = parseNdjson(await res.text());
   cache.set(path, out);
   return out;
+}
+
+// Bars carry provenance headers (X-Bars-Source / X-Bars-Archive /
+// X-Bars-Counts) the generic loadJsonl cache path can't surface, so
+// bars get their own loader returning { bars, meta }. meta.archive
+// === 'unavailable' means coord's archive path yielded nothing and
+// the chart is live-only (bars.jsonl ~= today) — the UI must show
+// that, not silently render a truncated chart (prime directive).
+// Cached under a distinct key so it doesn't collide with any generic
+// loadJsonl(barsPath) reader.
+async function loadBars(path, force = false) {
+  const ck = `__bars__${path}`;
+  if (!force && cache.has(ck)) return cache.get(ck);
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`fetch ${path} ${res.status}`);
+  const bars = parseNdjson(await res.text());
+  const meta = {
+    source:  res.headers.get('X-Bars-Source')  || 'unknown',
+    archive: res.headers.get('X-Bars-Archive') || 'unknown',
+    counts:  res.headers.get('X-Bars-Counts')  || '',
+  };
+  const tuple = { bars, meta };
+  cache.set(ck, tuple);
+  return tuple;
 }
 
 // ── Path resolution: mock vs real ────────────────────────────────────
@@ -126,35 +154,63 @@ export function useSlotData(runnerId, slotIdx) {
   useEffect(() => {
     if (!runnerId || slotIdx == null) return;
     let cancelled = false;
-    setData(null);   // reset on slot/runner change
-    // Bust cache so route changes get fresh data when revisiting a slot
-    // that was streaming live updates.
-    [`bars.jsonl`, `trades.jsonl`, `broker_truth.jsonl`, `decisions.jsonl`, `audit.jsonl`, `trail_arms.jsonl`].forEach(f => {
-      cache.delete(slotFileUrl(runnerId, slotIdx, f));
-    });
+
+    const tradesP = slotFileUrl(runnerId, slotIdx, 'trades.jsonl');
+    const brokerP = slotFileUrl(runnerId, slotIdx, 'broker_truth.jsonl');
+    const decP    = slotFileUrl(runnerId, slotIdx, 'decisions.jsonl');
+    const auditP  = slotFileUrl(runnerId, slotIdx, 'audit.jsonl');
+    const armsP   = slotFileUrl(runnerId, slotIdx, 'trail_arms.jsonl');
+    const barsP   = slotFileUrl(runnerId, slotIdx, 'bars.jsonl');
+
+    // Stale-while-revalidate. Previously every slot/runner switch did
+    // setData(null) + a blanket cache.delete + full refetch, which
+    // blanked the view and (pre-fast-fail) hung ~21s on bars. Now: if
+    // this slot was visited before, render the cached snapshot
+    // INSTANTLY, then refetch fresh in the background and swap on
+    // arrival. The live SSE stream mutates `data` in place between
+    // visits, so the cached snapshot is only a few seconds stale and
+    // the background refetch converges it — correctness preserved
+    // (per the prime directive: never SILENTLY stale; this is
+    // show-then-reconcile within seconds, and bars carry an explicit
+    // archive-status banner).
+    const c = (p) => cache.get(p);
+    const barsTuple = cache.get(`__bars__${barsP}`);
+    if (c(tradesP) && c(brokerP) && c(decP)) {
+      setData({
+        bars: barsTuple?.bars || [],
+        barsMeta: barsTuple?.meta || null,
+        trades: c(tradesP), broker: c(brokerP), decisions: c(decP),
+        audit: c(auditP) || [], trail_arms: c(armsP) || [],
+      });
+    } else {
+      setData(null);   // first visit to this slot — show loading
+    }
+
+    // Background refresh (force=true bypasses + refreshes the cache).
+    // Quartet and bars resolve independently; each setData preserves
+    // the other's slice via prev so a race can't drop data.
     Promise.all([
-      loadJsonl(slotFileUrl(runnerId, slotIdx, 'trades.jsonl')),
-      loadJsonl(slotFileUrl(runnerId, slotIdx, 'broker_truth.jsonl')),
-      loadJsonl(slotFileUrl(runnerId, slotIdx, 'decisions.jsonl')),
-      loadJsonl(slotFileUrl(runnerId, slotIdx, 'audit.jsonl'))
-        .catch(() => []),         // mock fixtures may not have audit
-      loadJsonl(slotFileUrl(runnerId, slotIdx, 'trail_arms.jsonl'))
-        .catch(() => []),         // engine emission still rolling out
+      loadJsonl(tradesP, true),
+      loadJsonl(brokerP, true),
+      loadJsonl(decP, true),
+      loadJsonl(auditP, true).catch(() => []),   // mock may lack audit
+      loadJsonl(armsP, true).catch(() => []),    // emission rolling out
     ]).then(([trades, broker, decisions, audit, trail_arms]) => {
       if (cancelled) return;
-      setData({ bars: [], trades, broker, decisions, audit, trail_arms });
+      setData(prev => ({
+        bars: prev?.bars || [], barsMeta: prev?.barsMeta || null,
+        trades, broker, decisions, audit, trail_arms,
+      }));
     }).catch(console.error);
-    // Slow loner: bars. Merge in when ready; the chart renders empty
-    // until then. If bars finish FIRST (e.g. cache hit) and the
-    // quartet hasn't arrived yet, seed an otherwise-empty data shape
-    // so we don't lose them.
-    loadJsonl(slotFileUrl(runnerId, slotIdx, 'bars.jsonl'))
-      .then(bars => {
+
+    loadBars(barsP, true)
+      .then(({ bars, meta }) => {
         if (cancelled) return;
         setData(prev => prev
-          ? { ...prev, bars }
-          : { bars, trades: [], broker: [], decisions: [], audit: [], trail_arms: [] });
+          ? { ...prev, bars, barsMeta: meta }
+          : { bars, barsMeta: meta, trades: [], broker: [], decisions: [], audit: [], trail_arms: [] });
       }).catch(console.error);
+
     return () => { cancelled = true; };
   }, [runnerId, slotIdx]);
 

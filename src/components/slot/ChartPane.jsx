@@ -491,6 +491,18 @@ export default function ChartPane({ data, tf, setTf, selectedTradeKey, setSelect
           </div>
         </div>
       )}
+      {/* Honest degraded-state banner (prime directive). archive
+          ='unavailable' = coord's archive path yielded nothing and
+          the chart is live-only (~today's bars.jsonl, no history) —
+          surface it instead of silently rendering a truncated chart.
+          Only when bars actually loaded, so it doesn't fight the
+          loading overlay above. */}
+      {data?.barsMeta?.archive === 'unavailable' && data.bars?.length > 0 && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded bg-panel/90 border border-trail text-[11px] text-trail pointer-events-none">
+          archive history unavailable — live bars only
+          {data.barsMeta.counts ? ` (${data.barsMeta.counts})` : ''}
+        </div>
+      )}
       {/* z-index 10: lightweight-charts creates an internal stacking
           context with its own canvases. Without explicit z-index here
           the overlay can render BELOW the candle layer. (Same trick as
